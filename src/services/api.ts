@@ -113,14 +113,16 @@ export const api = {
   // Painel Administrativo
   async getAdminDashboard(): Promise<DashboardMetrics> {
     const res = await fetch(`${BASE_URL}/admin/dashboard`);
-    if (!res.ok) throw new Error('Falha ao carregar métricas administrativas.');
-    return res.json();
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Falha ao carregar métricas administrativas.');
+    return json;
   },
 
   async getAdminPayments(limit = 100): Promise<{ payments: Payment[] }> {
     const res = await fetch(`${BASE_URL}/admin/payments?limit=${limit}`);
-    if (!res.ok) throw new Error('Falha ao carregar pagamentos.');
-    return res.json();
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Falha ao carregar pagamentos.');
+    return json;
   },
 
   async getAdminParticipants(groupId?: string, q?: string): Promise<{ participants: Participant[] }> {
@@ -128,8 +130,9 @@ export const api = {
     if (groupId) params.append('groupId', groupId);
     if (q) params.append('q', q);
     const res = await fetch(`${BASE_URL}/admin/participants?${params.toString()}`);
-    if (!res.ok) throw new Error('Falha ao carregar participantes.');
-    return res.json();
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Falha ao carregar participantes.');
+    return json;
   },
 
   async getAdminAuditLogs(limit = 100, type?: string, groupId?: string): Promise<{ logs: AuditLog[] }> {
@@ -138,8 +141,9 @@ export const api = {
     if (type) params.append('type', type);
     if (groupId) params.append('groupId', groupId);
     const res = await fetch(`${BASE_URL}/admin/audit-logs?${params.toString()}`);
-    if (!res.ok) throw new Error('Falha ao carregar logs de auditoria.');
-    return res.json();
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Falha ao carregar logs de auditoria.');
+    return json;
   },
 
   async updateGroupCapacity(groupId: string, capacity: number): Promise<{ group: Group }> {

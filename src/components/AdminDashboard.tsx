@@ -110,18 +110,22 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const loadSubTabData = async () => {
-    if (adminTab === 'payments') {
-      const res = await api.getAdminPayments(100);
-      setPayments(res.payments);
-    } else if (adminTab === 'participants') {
-      const res = await api.getAdminParticipants(selectedGroupFilter, participantSearch);
-      setParticipants(res.participants);
-    } else if (adminTab === 'audit') {
-      const res = await api.getAdminAuditLogs(100);
-      setAuditLogs(res.logs);
-    } else if (adminTab === 'draws') {
-      const res = await api.getAdminDrawsHistory();
-      setDrawsHistory(res.draws);
+    try {
+      if (adminTab === 'payments') {
+        const res = await api.getAdminPayments(100);
+        setPayments(res.payments || []);
+      } else if (adminTab === 'participants') {
+        const res = await api.getAdminParticipants(selectedGroupFilter, participantSearch);
+        setParticipants(res.participants || []);
+      } else if (adminTab === 'audit') {
+        const res = await api.getAdminAuditLogs(100);
+        setAuditLogs(res.logs || []);
+      } else if (adminTab === 'draws') {
+        const res = await api.getAdminDrawsHistory();
+        setDrawsHistory(res.draws || []);
+      }
+    } catch (err: any) {
+      console.error('Erro ao carregar dados da aba:', err);
     }
   };
 
