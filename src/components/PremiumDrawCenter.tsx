@@ -872,7 +872,7 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={handleConfirmDraw}
+                  onClick={() => handleConfirmDraw(false)}
                   className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center gap-2"
                 >
                   <Trophy className="w-4 h-4" />

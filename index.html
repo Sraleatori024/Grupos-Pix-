@@ -1,6 +1,34 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      (function () {
+        try {
+          var nativeFetch = typeof window !== 'undefined' ? window.fetch : null;
+          var _currentFetch = nativeFetch ? nativeFetch.bind(window) : null;
+          Object.defineProperty(window, 'fetch', {
+            get: function () {
+              return _currentFetch || (nativeFetch ? nativeFetch.bind(window) : undefined);
+            },
+            set: function (newFetch) {
+              _currentFetch = newFetch;
+            },
+            configurable: true,
+            enumerable: true,
+          });
+        } catch (e) {
+          try {
+            var orig = window.fetch;
+            Object.defineProperty(window, 'fetch', {
+              value: orig,
+              writable: true,
+              configurable: true,
+              enumerable: true,
+            });
+          } catch (err) {}
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Plataforma de Grupos Pix e Sorteios Auditáveis</title>
@@ -9,26 +37,6 @@
     <meta property="og:description" content="Sistema completo para gestão de grupos de participantes e sorteios independentes, pagamentos via Pix com concorrência atômica, webhooks idempotentes, integração com WhatsApp/Telegram e auditoria criptográfica." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <script>
-      (function () {
-        try {
-          var nativeFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
-          var _fetch = nativeFetch;
-          Object.defineProperty(window, 'fetch', {
-            get: function () {
-              return _fetch || (nativeFetch ? nativeFetch : undefined);
-            },
-            set: function (val) {
-              _fetch = val;
-            },
-            configurable: true,
-            enumerable: true,
-          });
-        } catch (e) {
-          // Fallback if property is non-configurable
-        }
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

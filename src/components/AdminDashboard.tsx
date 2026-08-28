@@ -90,9 +90,12 @@ export const AdminDashboard: React.FC = () => {
   const [processNumberInput, setProcessNumberInput] = useState('');
   const [entryPriceInput, setEntryPriceInput] = useState(100);
 
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
   const loadDashboard = async () => {
     try {
       setLoading(true);
+      setDashboardError(null);
       const data = await api.getAdminDashboard();
       setMetrics(data);
       setLegalStatusInput(data.config.promotionLegalStatus);
@@ -100,6 +103,7 @@ export const AdminDashboard: React.FC = () => {
       setEntryPriceInput(data.config.entryPriceCents || 100);
     } catch (err: any) {
       console.error('Erro ao carregar dashboard:', err);
+      setDashboardError(err.message || 'Erro ao carregar dados do painel.');
     } finally {
       setLoading(false);
     }
@@ -403,7 +407,26 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
-  if (!metrics) return null;
+  if (!metrics) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center space-y-4 max-w-xl mx-auto shadow-xl">
+        <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+          <AlertTriangle className="w-7 h-7" />
+        </div>
+        <h3 className="text-lg font-extrabold text-white">Não foi possível carregar o painel administrativo</h3>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          {dashboardError || 'Ocorreu uma falha temporária ao obter os dados do servidor.'}
+        </p>
+        <button
+          onClick={loadDashboard}
+          className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer inline-flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>Tentar Novamente</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
