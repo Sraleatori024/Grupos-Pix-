@@ -584,8 +584,13 @@ router.post('/admin/draws/:id/execute', checkAdminAuth, (req: Request, res: Resp
       return res.status(404).json({ error: 'Grupo não encontrado.' });
     }
 
-    // Proteção de Idempotência: Se o sorteio já foi concluído, retorna o resultado oficial sem duplicar
-    if (group.drawStatus === 'COMPLETED' && group.drawId) {
+    const forceRedraw = req.body.forceRedraw === true;
+
+    // Se solicitado forceRedraw (para testes ilimitados), reseta o status
+    if (forceRedraw && group.drawStatus === 'COMPLETED') {
+      db.resetGroupDraw(groupId);
+    } else if (group.drawStatus === 'COMPLETED' && group.drawId) {
+      // Proteção de Idempotência em produção: Se o sorteio já foi concluído, retorna o resultado oficial sem duplicar
       const existingDraw = db.getDraw(group.drawId);
       if (existingDraw) {
         return res.json({
@@ -639,6 +644,23 @@ router.post('/admin/draws/:id/execute', checkAdminAuth, (req: Request, res: Resp
         maskedCpf: result.drawRecord.winnerMaskedCpf,
       },
       hashVerificationTrail: result.hashVerificationTrail,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Resetar status de sorteio de um grupo (Permite testar quantas vezes desejar)
+router.post('/admin/draws/:id/reset', checkAdminAuth, (req: Request, res: Response) => {
+  try {
+    const groupId = req.params.id.toUpperCase();
+    const ok = db.resetGroupDraw(groupId);
+    if (!ok) {
+      return res.status(404).json({ error: 'Grupo não encontrado.' });
+    }
+    res.json({
+      success: true,
+      message: `Sorteio do grupo ${groupId} resetado com sucesso para novos testes!`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -659,6 +659,33 @@ class Database {
     );
   }
 
+  // --- Reset de Sorteio para Testes Ilimitados ---
+  public resetGroupDraw(groupId: string): boolean {
+    const group = this.data.groups[groupId];
+    if (!group) return false;
+
+    // Se houver sorteio vinculado, remover dos draws
+    if (group.drawId && this.data.draws[group.drawId]) {
+      delete this.data.draws[group.drawId];
+    }
+
+    group.drawStatus = 'NONE';
+    group.drawId = null;
+    group.status = 'FULL';
+
+    this.addAuditLog({
+      type: 'GROUP_FULL',
+      actor: 'ADMIN',
+      groupId,
+      metadata: {
+        action: 'RESET_GROUP_DRAW_FOR_TESTING',
+      },
+    });
+
+    this.save();
+    return true;
+  }
+
   // --- Financial & Metrics Aggregations ---
   public getDashboardMetrics() {
     const groups = this.getAllGroups();

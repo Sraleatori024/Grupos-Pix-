@@ -197,14 +197,23 @@ export const api = {
     return json;
   },
 
-  async executeDraw(groupId: string, entropySeed?: string): Promise<any> {
+  async executeDraw(groupId: string, entropySeed?: string, forceRedraw = false): Promise<any> {
     const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entropySeed }),
+      body: JSON.stringify({ entropySeed, forceRedraw }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || 'Erro ao executar sorteio.');
+    return json;
+  },
+
+  async resetGroupDraw(groupId: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/reset`, {
+      method: 'POST',
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Erro ao resetar sorteio para novo teste.');
     return json;
   },
 

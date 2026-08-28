@@ -875,13 +875,36 @@ export const AdminDashboard: React.FC = () => {
                           </button>
                         )}
                         {g.drawStatus === 'COMPLETED' ? (
-                          <button
-                            onClick={() => setActiveDrawGroupId(g.groupId)}
-                            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-[11px] transition shadow cursor-pointer inline-flex items-center gap-1.5"
-                          >
-                            <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Central de Sorteio</span>
-                          </button>
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              onClick={() => setActiveDrawGroupId(g.groupId)}
+                              className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-[11px] transition shadow cursor-pointer inline-flex items-center gap-1"
+                              title="Ver Vencedor e Detalhes do Sorteio"
+                            >
+                              <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Ver Resultado</span>
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  setActionLoading(true);
+                                  await api.resetGroupDraw(g.groupId);
+                                  setActiveDrawGroupId(g.groupId);
+                                  await loadDashboard();
+                                } catch (err: any) {
+                                  alert('Erro ao resetar: ' + err.message);
+                                } finally {
+                                  setActionLoading(false);
+                                }
+                              }}
+                              disabled={actionLoading}
+                              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 font-bold text-[11px] transition cursor-pointer inline-flex items-center gap-1"
+                              title="Permite testar o sorteio novamente neste grupo"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Sortear Novamente</span>
+                            </button>
+                          </div>
                         ) : (
                           <button
                             onClick={() => setActiveDrawGroupId(g.groupId)}

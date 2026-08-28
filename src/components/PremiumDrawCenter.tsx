@@ -111,17 +111,21 @@ class SoundEffects {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.type = 'triangle';
-      const freq = count === 1 ? 880 : count === 2 ? 660 : 440;
+      osc.type = count === 1 ? 'sine' : count <= 3 ? 'triangle' : 'sine';
+      
+      // Tom sobe progressivamente conforme chega perto do 1
+      const baseFreq = 300 + (11 - count) * 45; // 10 -> 345Hz ... 1 -> 750Hz
+      const freq = count === 1 ? 880 : baseFreq;
       osc.frequency.setValueAtTime(freq, now);
 
-      gain.gain.setValueAtTime(0.18, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      const duration = count <= 3 ? 0.35 : 0.22;
+      gain.gain.setValueAtTime(count === 1 ? 0.22 : 0.14, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
       osc.start(now);
-      osc.stop(now + 0.3);
+      osc.stop(now + duration + 0.02);
     } catch {
       // Audio seguro
     }
@@ -197,7 +201,7 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
   const [officialDrawRecord, setOfficialDrawRecord] = useState<DrawAuditRecord | null>(null);
 
   // Estado da contagem e da animação do caça-níquel
-  const [countdown, setCountdown] = useState<number>(3);
+  const [countdown, setCountdown] = useState<number>(10);
   const [displayedSlot, setDisplayedSlot] = useState<{
     prev: string;
     curr: string;
@@ -212,6 +216,7 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationTimerRef = useRef<any>(null);
+  const countdownIntervalRef = useRef<any>(null);
   const confettiParticles = useRef<any[]>([]);
 
   // Preferência de redução de movimento do sistema
@@ -366,14 +371,14 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
     setState('CONFIRMING');
   };
 
-  // Confirmar início do sorteio
-  const handleConfirmDraw = async () => {
+  // Confirmar início do sorteio (suporta forceRedraw para testes ilimitados)
+  const handleConfirmDraw = async (forceRedraw = false) => {
     setState('REQUESTING');
     setErrorMsg(null);
 
     try {
       // 1. O BACKEND DETERMINA O VENCEDOR DE FORMA SEGURA E AUDITÁVEL (CSPRNG)
-      const res = await api.executeDraw(groupId);
+      const res = await api.executeDraw(groupId, undefined, forceRedraw);
       if (!res || !res.draw || !res.winner) {
         throw new Error('Servidor não retornou dados do vencedor.');
       }
@@ -393,7 +398,7 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
         onDrawCompleted(res.draw);
       }
 
-      // Se o usuário prefere redução de movimento, pular contagem longa
+      // Se o usuário prefere redução de movimento, pular animações longas
       if (prefersReducedMotion) {
         setState('REVEALED');
         sfx.playVictory();
@@ -401,82 +406,72 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
         return;
       }
 
-      // 2. INICIAR CONTAGEM REGRESSIVA VISUAL (3, 2, 1)
-      setState('COUNTDOWN');
-      setCountdown(3);
-      sfx.playCountdown(3);
-
-      setTimeout(() => {
-        setCountdown(2);
-        sfx.playCountdown(2);
-      }, 1000);
-
-      setTimeout(() => {
-        setCountdown(1);
-        sfx.playCountdown(1);
-      }, 2000);
-
-      // 3. INICIAR ROTAÇÃO VISUAL DO CAÇA-NÍQUEL (3 segundos de alta velocidade)
-      setTimeout(() => {
-        startSlotMachineAnimation(winnerData);
-      }, 3000);
+      // 2. INICIAR ROTAÇÃO VISUAL RÁPIDA E CONTAGEM REGRESSIVA SINCRONIZADA DE 10 ATÉ 1
+      startSynchronizedDrawSequence(winnerData);
     } catch (err: any) {
       setErrorMsg(err.message || 'Falha ao processar sorteio no servidor.');
       setState('ERROR');
     }
   };
 
-  // Motor da animação de caça-níquel (Puramente visual - o vencedor já é conhecido)
-  const startSlotMachineAnimation = (winner: {
+  // Motor da sequência de sorteio: 10 segundos totais (Rápido -> Desaceleração suave -> 10,9,8...1 -> Vencedor)
+  const startSynchronizedDrawSequence = (winner: {
     name: string;
     number: string;
     participantId: string;
   }) => {
     setState('SPINNING');
+    setCountdown(10);
+    sfx.playCountdown(10);
 
     const pool =
       groupData?.sampleNames && groupData.sampleNames.length > 5
         ? groupData.sampleNames
         : [
-            'MARIA SILVA',
-            'CARLOS OLIVEIRA',
-            'JOÃO SANTOS',
-            'ANA PAULA',
-            'PEDRO LIMA',
-            'LUCAS FERREIRA',
-            'JULIANA COSTA',
-            'BRUNO ALMEIDA',
-            'CAMILA SOUZA',
-            'RODRIGO MARTINS',
+            'MARIA SILVA SANTOS',
+            'CARLOS EDUARDO OLIVEIRA',
+            'JOÃO PEDRO SANTOS',
+            'ANA PAULA RIBEIRO',
+            'PEDRO HENRIQUE LIMA',
+            'LUCAS FERREIRA COSTA',
+            'JULIANA COSTA ALVES',
+            'BRUNO ALMEIDA LOPES',
+            'CAMILA SOUZA GOMES',
+            'RODRIGO MARTINS DIAS',
           ];
 
-    let speed = 40; // milissegundos por frame (muito rápido)
     let poolIndex = 0;
     const startTime = Date.now();
-    const spinDuration = 3200; // 3.2s de rotação rápida
-    const decelerateDuration = 2200; // 2.2s de desaceleração
+    const totalDuration = 10000; // 10 segundos exatos de experiência
+    let currentCount = 10;
 
-    const spinStep = () => {
+    // Cronômetro da contagem de 10 até 1 com áudio sincronizado
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    countdownIntervalRef.current = setInterval(() => {
+      currentCount--;
+      if (currentCount >= 1) {
+        setCountdown(currentCount);
+        sfx.playCountdown(currentCount);
+      } else {
+        clearInterval(countdownIntervalRef.current);
+      }
+    }, 1000);
+
+    const runFrame = () => {
       const elapsed = Date.now() - startTime;
 
-      if (elapsed < spinDuration) {
-        // Fase 1: Rotação Acelerada Máxima
-        poolIndex = (poolIndex + 1) % pool.length;
-        const prev = pool[(poolIndex + pool.length - 1) % pool.length];
-        const curr = pool[poolIndex];
-        const next = pool[(poolIndex + 1) % pool.length];
-        const randomNum = Math.floor(Math.random() * 10000)
-          .toString()
-          .padStart(5, '0');
-
-        setDisplayedSlot({ prev, curr, next, num: randomNum });
-        sfx.playTick(1.2);
-        animationTimerRef.current = setTimeout(spinStep, speed);
-      } else if (elapsed < spinDuration + decelerateDuration) {
-        // Fase 2: Desaceleração Física Progressiva (Easing Exponencial)
-        setState('DECELERATING');
-        const decelProgress = (elapsed - spinDuration) / decelerateDuration;
-        speed = 40 + Math.pow(decelProgress, 2.5) * 350; // De 40ms até ~390ms
+      if (elapsed < totalDuration) {
+        // Cálculo de velocidade com curva física suave (inicia a 35ms e desacelera progressivamente até ~450ms no final)
+        const progress = Math.min(1, elapsed / totalDuration);
+        
+        // Fase 1 (primeiros 4.5s): Rápido (35ms - 80ms)
+        // Fase 2 (4.5s a 10s): Desaceleração dramática e visível dos nomes (80ms - 500ms)
+        let frameInterval = 35;
+        if (progress > 0.45) {
+          setState('DECELERATING');
+          const decelFactor = (progress - 0.45) / 0.55; // 0 a 1
+          frameInterval = 35 + Math.pow(decelFactor, 2.6) * 440; // 35ms -> 475ms
+        }
 
         poolIndex = (poolIndex + 1) % pool.length;
         const prev = pool[(poolIndex + pool.length - 1) % pool.length];
@@ -487,10 +482,17 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
           .padStart(5, '0');
 
         setDisplayedSlot({ prev, curr, next, num: randomNum });
-        sfx.playTick(1.0 - decelProgress * 0.4);
-        animationTimerRef.current = setTimeout(spinStep, speed);
+
+        // Som de tique mecânico modulado pela velocidade
+        const pitch = Math.max(0.6, 1.2 - progress * 0.55);
+        sfx.playTick(pitch);
+
+        animationTimerRef.current = setTimeout(runFrame, frameInterval);
       } else {
-        // Fase 3: Parada Exata no Vencedor Oficial Selecionado pelo Servidor
+        // Revelação final e travamento no vencedor oficial selado pelo backend
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        setCountdown(1);
+
         setDisplayedSlot({
           prev: pool[0] || 'Participante Confirmado',
           curr: winner.name,
@@ -504,7 +506,21 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
       }
     };
 
-    spinStep();
+    runFrame();
+  };
+
+  // Resetar sorteio para permitir testes ilimitados
+  const handleResetForTesting = async () => {
+    try {
+      setState('REQUESTING');
+      setErrorMsg(null);
+      await api.resetGroupDraw(groupId);
+      await loadEligibility();
+      setState('IDLE');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao resetar sorteio para novo teste.');
+      setState('ERROR');
+    }
   };
 
   // Limpeza de timers
@@ -512,6 +528,9 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
     return () => {
       if (animationTimerRef.current) {
         clearTimeout(animationTimerRef.current);
+      }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
       }
     };
   }, []);
@@ -698,14 +717,21 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
                 {/* Se estiver girando, desacelerando ou aguardando */}
                 {(state === 'IDLE' || state === 'CONFIRMING' || state === 'REQUESTING' || state === 'SPINNING' || state === 'DECELERATING') && (
                   <div className="space-y-3">
-                    <div className="text-[11px] text-center text-slate-400 uppercase tracking-wider font-semibold">
-                      {state === 'SPINNING'
-                        ? '🎰 Sorteando Vencedor...'
-                        : state === 'DECELERATING'
-                        ? '⏳ Desacelerando e Selando Resultado...'
-                        : state === 'REQUESTING'
-                        ? '🔒 Congelando Lista & Selecionando Vencedor no Servidor...'
-                        : 'Aguardando Acionamento da Alavanca'}
+                    <div className="flex items-center justify-center gap-2">
+                      <span className="text-[11px] text-center text-slate-400 uppercase tracking-wider font-semibold">
+                        {state === 'SPINNING'
+                          ? '🎰 Girando em Alta Velocidade...'
+                          : state === 'DECELERATING'
+                          ? '⏳ Desacelerando e Passando Nomes Devagar...'
+                          : state === 'REQUESTING'
+                          ? '🔒 Congelando Lista & Selecionando Vencedor no Servidor...'
+                          : 'Aguardando Acionamento da Alavanca'}
+                      </span>
+                      {(state === 'SPINNING' || state === 'DECELERATING') && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-mono font-black text-xs animate-pulse">
+                          ⏱ {countdown}s
+                        </span>
+                      )}
                     </div>
 
                     {/* Janela Central Estilo Slot Machine */}
@@ -714,22 +740,22 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
                       <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-14 bg-emerald-500/10 border-y border-emerald-500/30 pointer-events-none" />
 
                       {/* Slot Top (anterior) */}
-                      <div className="text-center py-1 text-xs text-slate-600 font-mono blur-[0.5px] truncate">
+                      <div className="text-center py-1 text-xs text-slate-500 font-mono blur-[0.3px] truncate transition-all duration-150">
                         {displayedSlot.prev}
                       </div>
 
                       {/* Slot Center (Destaque Central) */}
                       <div className="text-center py-3">
-                        <div className="text-lg sm:text-2xl font-black text-white font-mono tracking-tight truncate px-2">
+                        <div className="text-xl sm:text-3xl font-black text-white font-mono tracking-tight truncate px-2 text-emerald-300 drop-shadow-[0_0_12px_rgba(16,185,129,0.3)]">
                           {displayedSlot.curr}
                         </div>
-                        <div className="text-xs font-mono font-bold text-emerald-400">
+                        <div className="text-xs sm:text-sm font-mono font-bold text-emerald-400 mt-1">
                           {displayedSlot.num !== '-----' ? `Cota #${displayedSlot.num}` : '-----'}
                         </div>
                       </div>
 
                       {/* Slot Bottom (próximo) */}
-                      <div className="text-center py-1 text-xs text-slate-600 font-mono blur-[0.5px] truncate">
+                      <div className="text-center py-1 text-xs text-slate-500 font-mono blur-[0.3px] truncate transition-all duration-150">
                         {displayedSlot.next}
                       </div>
                     </div>
@@ -865,6 +891,16 @@ export const PremiumDrawCenter: React.FC<PremiumDrawCenterProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetForTesting}
+                  className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/40 transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                  title="Permite testar o sorteio novamente de forma ilimitada neste grupo"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Testar Sorteio Novamente</span>
+                </button>
+
                 {officialWinner && onViewParticipant && (
                   <button
                     onClick={() => onViewParticipant(officialWinner.participantId)}
