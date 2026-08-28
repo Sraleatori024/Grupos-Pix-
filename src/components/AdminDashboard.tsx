@@ -235,6 +235,25 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleSeed10kGroup = async () => {
+    try {
+      setActionLoading(true);
+      const res = await api.seed10kGroup(10000);
+      setActionMessage({
+        type: 'success',
+        text: res.message,
+      });
+      await loadDashboard();
+      if (adminTab === 'groups') {
+        loadSubTabData();
+      }
+    } catch (err: any) {
+      alert('Erro ao gerar grupo de 10.000 pessoas: ' + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleDeleteGroup = async (group: Group) => {
     if (group.confirmedParticipants > 0) {
       alert(`Não é possível excluir o grupo "${group.name}" pois ele já possui ${group.confirmedParticipants} participantes confirmados.`);
@@ -690,31 +709,52 @@ export const AdminDashboard: React.FC = () => {
                 Cadastre e administre múltiplos grupos independentes sem limites com configurações personalizadas.
               </p>
             </div>
-            <button
-              onClick={openCreateGroupModal}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Adicionar Grupo</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSeed10kGroup}
+                disabled={actionLoading}
+                className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                title="Criar um grupo de teste com 10.000 participantes confirmados"
+              >
+                <Trophy className="w-4 h-4 text-amber-400" />
+                <span>{actionLoading ? 'Gerando 10k...' : 'Gerar Grupo de 10.000 Pessoas'}</span>
+              </button>
+              <button
+                onClick={openCreateGroupModal}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Adicionar Grupo</span>
+              </button>
+            </div>
           </div>
 
           {metrics.groups.length === 0 ? (
-            <div className="p-12 text-center bg-slate-950/60 rounded-2xl border border-slate-800 space-y-3">
+            <div className="p-12 text-center bg-slate-950/60 rounded-2xl border border-slate-800 space-y-4">
               <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mx-auto flex items-center justify-center">
                 <Layers className="w-6 h-6" />
               </div>
               <h4 className="text-sm font-bold text-white">Nenhum grupo cadastrado no momento</h4>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                A plataforma está 100% limpa e zerada. Clique no botão abaixo para criar seu primeiro grupo com link do WhatsApp ou Telegram, cota, prêmio e número de vagas.
+                A plataforma está 100% limpa e zerada. Você pode criar um novo grupo ou gerar instantaneamente um grupo de demonstração com 10.000 participantes para testar o sorteio ao vivo!
               </p>
-              <button
-                onClick={openCreateGroupModal}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Criar Primeiro Grupo</span>
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={handleSeed10kGroup}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Trophy className="w-4 h-4 text-amber-400" />
+                  <span>Gerar Grupo com 10.000 Pessoas para Sorteio</span>
+                </button>
+                <button
+                  onClick={openCreateGroupModal}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Criar Primeiro Grupo Manualmente</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="overflow-x-auto">

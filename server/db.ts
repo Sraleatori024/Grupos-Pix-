@@ -69,6 +69,11 @@ class Database {
     }
     this.dbFilePath = path.join(dataDir, 'database.json');
     this.data = this.loadOrInitialize();
+
+    // Se a base estiver vazia, cria o grupo de 10.000 pessoas para o teste do usuário
+    if (Object.keys(this.data.groups).length === 0) {
+      this.createBulkTestGroup(10000);
+    }
   }
 
   private getGroupMutex(groupId: string): Mutex {
@@ -729,6 +734,120 @@ class Database {
   }
 
   // --- Utilitário de Teste / Reset ---
+  public createBulkTestGroup(count = 10000): Group {
+    const groupId = 'G-MEGA10K';
+    const groupName = 'Sorteio Especial Mega 10.000';
+    const prizeAmountCents = 700000; // R$ 7.000,00
+    const entryPriceCents = 100; // R$ 1,00
+    const adminFeeCents = 300000;
+
+    const group: Group = {
+      groupId,
+      name: groupName,
+      description: 'Grupo oficial de demonstração e teste de alta escala para sorteio ao vivo.',
+      capacity: count,
+      entryPriceCents,
+      prizeAmountCents,
+      adminFeeCents,
+      groupType: 'WHATSAPP',
+      groupLink: 'https://chat.whatsapp.com/test-mega-10k',
+      status: 'FULL',
+      drawStatus: 'NONE',
+      drawId: null,
+      confirmedParticipants: count,
+      createdAt: new Date().toISOString(),
+      closedAt: new Date().toISOString(),
+    };
+
+    this.data.groups[groupId] = group;
+
+    const firstNames = [
+      'Lucas', 'Gabriel', 'Mateus', 'Felipe', 'Rodrigo', 'Bruno', 'Carlos', 'Eduardo', 'Thiago', 'Leonardo',
+      'Guilherme', 'Diego', 'Rafael', 'Alexandre', 'Daniel', 'Marcos', 'Fernando', 'Fabio', 'Andre', 'Marcelo',
+      'Mariana', 'Juliana', 'Camila', 'Beatriz', 'Larissa', 'Fernanda', 'Aline', 'Patricia', 'Amanda', 'Bruna',
+      'Jessica', 'Leticia', 'Vanessa', 'Renata', 'Carolina', 'Daniela', 'Gabriela', 'Raquel', 'Tatiane', 'Priscila',
+      'Joao', 'Jose', 'Antonio', 'Francisco', 'Paulo', 'Pedro', 'Luiz', 'Manoel', 'Maria', 'Ana',
+    ];
+
+    const lastNames = [
+      'Silva', 'Santos', 'Oliveira', 'Souza', 'Rodrigues', 'Ferreira', 'Alves', 'Pereira', 'Lima', 'Gomes',
+      'Costa', 'Ribeiro', 'Martins', 'Carvalho', 'Almeida', 'Lopes', 'Soares', 'Fernandes', 'Vieira', 'Barbosa',
+      'Rocha', 'Dias', 'Nascimento', 'Andrade', 'Moreira', 'Nunes', 'Marques', 'Machado', 'Mendes', 'Freitas',
+      'Cardoso', 'Ramos', 'Goncalves', 'Santana', 'Teixeira', 'Cavalcanti', 'Melo', 'Pinto', 'Castro', 'Azevedo',
+    ];
+
+    const nowIso = new Date().toISOString();
+
+    for (let i = 1; i <= count; i++) {
+      const fName = firstNames[(i * 7) % firstNames.length];
+      const lName = lastNames[(i * 13) % lastNames.length];
+      const lName2 = lastNames[(i * 19 + 3) % lastNames.length];
+      const fullName = `${fName} ${lName} ${lName2}`;
+      const numStr = i.toString().padStart(5, '0');
+      const participantId = `PART-${groupId}-${numStr}`;
+      const paymentId = `PAY-${groupId}-${numStr}`;
+
+      const ddd = 10 + (i % 89);
+      const phoneEnd = (1000 + (i % 9000)).toString();
+      const phone = `${ddd}9${(1000 + (i % 8999))}${phoneEnd}`;
+
+      const cpfBase = (100000000 + (i * 97) % 899999999).toString();
+      const cpf = `${cpfBase}00`;
+
+      this.data.participants[participantId] = {
+        participantId,
+        groupId,
+        paymentId,
+        name: fullName,
+        phone,
+        email: `participante${i}@teste.com`,
+        cpf,
+        number: numStr,
+        sequenceNumber: i,
+        createdAt: nowIso,
+        confirmedAt: nowIso,
+      };
+
+      // Registrar também pagamento como pago para manter consistência 100%
+      this.data.payments[paymentId] = {
+        paymentId,
+        groupId,
+        userName: fullName,
+        userCpf: cpf,
+        userEmail: `participante${i}@teste.com`,
+        userPhone: phone,
+        amountCents: entryPriceCents,
+        gatewayFeeCents: 26,
+        netAmountCents: entryPriceCents - 26,
+        status: 'PAID',
+        gatewayTransactionId: `TX-MEGA-${numStr}`,
+        pixCopiaECola: '00020126...5204000053039865401.005802BR5913PIX6008BRASILIA62070503***6304****',
+        pixQrCode: 'data:image/svg+xml;utf8,<svg></svg>',
+        participantId,
+        assignedNumber: numStr,
+        webhookProcessed: true,
+        rawEventId: `SIM-BULK-${paymentId}`,
+        expiresAt: nowIso,
+        createdAt: nowIso,
+        paidAt: nowIso,
+      };
+    }
+
+    this.addAuditLog({
+      type: 'GROUP_FULL',
+      actor: 'ADMIN',
+      groupId,
+      metadata: {
+        action: 'CREATE_BULK_TEST_GROUP',
+        participantsCount: count,
+        prizeAmountCents,
+      },
+    });
+
+    this.save();
+    return group;
+  }
+
   public resetDatabase(): void {
     this.data.groups = this.generateSeedGroups();
     this.data.participants = {};

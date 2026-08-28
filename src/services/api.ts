@@ -239,6 +239,17 @@ export const api = {
     return json;
   },
 
+  async seed10kGroup(count = 10000): Promise<{ success: boolean; message: string; group: Group }> {
+    const res = await fetch(`${BASE_URL}/admin/seed-10k`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Erro ao gerar grupo de 10.000 pessoas.');
+    return json;
+  },
+
   async resetDatabase(): Promise<any> {
     const res = await fetch(`${BASE_URL}/admin/reset`, {
       method: 'POST',

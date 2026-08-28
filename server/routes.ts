@@ -809,6 +809,21 @@ router.post('/admin/test-concurrency', checkAdminAuth, async (req: Request, res:
   }
 });
 
+// Criar grupo de teste de alta escala (10.000 participantes confirmados)
+router.post('/admin/seed-10k', checkAdminAuth, (req: Request, res: Response) => {
+  try {
+    const count = parseInt(req.body.count || '10000', 10);
+    const group = db.createBulkTestGroup(count);
+    res.json({
+      success: true,
+      message: `Grupo de teste '${group.name}' criado com ${group.confirmedParticipants.toLocaleString('pt-BR')} participantes confirmados!`,
+      group,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Reset do banco para testes
 router.post('/admin/reset', checkAdminAuth, (_req: Request, res: Response) => {
   db.resetDatabase();
