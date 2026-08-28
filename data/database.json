@@ -1,0 +1,19 @@
+{
+  "groups": {},
+  "participants": {},
+  "payments": {},
+  "draws": {},
+  "auditLogs": [],
+  "processedWebhooks": {},
+  "config": {
+    "entryPriceCents": 100,
+    "promotionLegalStatus": "PENDING_REVIEW",
+    "legalProcessNumber": "",
+    "webhookSecret": "sec_pix_live_custom",
+    "gatewayFeeFixedCents": 25,
+    "gatewayFeePercentage": 0.99,
+    "prizeAllocationPercentage": 70,
+    "reserveAllocationPercentage": 10,
+    "maxCapacityPerGroup": 10000
+  }
+}

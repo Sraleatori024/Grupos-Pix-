@@ -1,0 +1,6 @@
+{
+  "name": "Plataforma de Grupos Pix e Sorteios Auditáveis",
+  "description": "Sistema completo para gestão de grupos de participantes e sorteios independentes, pagamentos via Pix com concorrência atômica, webhooks idempotentes, integração com WhatsApp/Telegram e auditoria criptográfica.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
