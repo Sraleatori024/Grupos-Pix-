@@ -10,49 +10,68 @@ import {
 
 const BASE_URL = '/api';
 
+async function requestJson<T>(url: string, options?: RequestInit, retries = 1): Promise<T> {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    const text = await res.text();
+
+    let data: any;
+    if (contentType.includes('application/json') || (text.startsWith('{') || text.startsWith('['))) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { error: text || `Resposta inválida do servidor (${res.status})` };
+      }
+    } else {
+      data = { error: text || `Erro no servidor (${res.status}: ${res.statusText})` };
+    }
+
+    if (!res.ok) {
+      const errorMessage = data?.error || data?.message || `Erro na requisição (${res.status})`;
+      throw new Error(errorMessage);
+    }
+
+    return data as T;
+  } catch (err: any) {
+    if (retries > 0 && (!err?.message || err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))) {
+      await new Promise((r) => setTimeout(r, 400));
+      return requestJson<T>(url, options, retries - 1);
+    }
+    throw err;
+  }
+}
+
 export const api = {
   // Grupos
   async getGroups(): Promise<{ groups: Group[]; config: Partial<SystemConfig> }> {
-    const res = await fetch(`${BASE_URL}/groups`);
-    if (!res.ok) throw new Error('Falha ao carregar grupos.');
-    return res.json();
+    return requestJson<{ groups: Group[]; config: Partial<SystemConfig> }>(`${BASE_URL}/groups`);
   },
 
   async getGroup(groupId: string): Promise<{ group: Group }> {
-    const res = await fetch(`${BASE_URL}/groups/${groupId}`);
-    if (!res.ok) throw new Error('Falha ao carregar grupo.');
-    return res.json();
+    return requestJson<{ group: Group }>(`${BASE_URL}/groups/${groupId}`);
   },
 
   async createGroup(groupData: import('../types').CreateGroupInput): Promise<{ group: Group }> {
-    const res = await fetch(`${BASE_URL}/admin/groups`, {
+    return requestJson<{ group: Group }>(`${BASE_URL}/admin/groups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(groupData),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao criar grupo.');
-    return json;
   },
 
   async updateGroup(groupId: string, groupData: import('../types').UpdateGroupInput): Promise<{ group: Group }> {
-    const res = await fetch(`${BASE_URL}/admin/groups/${groupId}`, {
+    return requestJson<{ group: Group }>(`${BASE_URL}/admin/groups/${groupId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(groupData),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao atualizar grupo.');
-    return json;
   },
 
   async deleteGroup(groupId: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${BASE_URL}/admin/groups/${groupId}`, {
+    return requestJson<{ success: boolean; message: string }>(`${BASE_URL}/admin/groups/${groupId}`, {
       method: 'DELETE',
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao excluir grupo.');
-    return json;
   },
 
   // Pagamentos Pix
@@ -63,76 +82,51 @@ export const api = {
     userEmail: string;
     userPhone: string;
   }): Promise<{ payment: Payment }> {
-    const res = await fetch(`${BASE_URL}/payments/create`, {
+    return requestJson<{ payment: Payment }>(`${BASE_URL}/payments/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao gerar Pix.');
-    return json;
   },
 
   async getPaymentStatus(paymentId: string): Promise<{ payment: Payment; participant: Participant | null }> {
-    const res = await fetch(`${BASE_URL}/payments/${paymentId}`);
-    if (!res.ok) throw new Error('Falha ao consultar status de pagamento.');
-    return res.json();
+    return requestJson<{ payment: Payment; participant: Participant | null }>(`${BASE_URL}/payments/${paymentId}`);
   },
 
   // Participantes
   async searchParticipants(query: string): Promise<{ participants: Participant[] }> {
-    const res = await fetch(`${BASE_URL}/participants/search?q=${encodeURIComponent(query)}`);
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      throw new Error(json.error || 'Erro ao pesquisar participantes.');
-    }
-    return res.json();
+    return requestJson<{ participants: Participant[] }>(`${BASE_URL}/participants/search?q=${encodeURIComponent(query)}`);
   },
 
   // Sorteios e Auditoria Pública
   async getDraws(): Promise<{ draws: DrawAuditRecord[] }> {
-    const res = await fetch(`${BASE_URL}/draws`);
-    if (!res.ok) throw new Error('Falha ao carregar sorteios.');
-    return res.json();
+    return requestJson<{ draws: DrawAuditRecord[] }>(`${BASE_URL}/draws`);
   },
 
   async getDraw(drawId: string): Promise<{ draw: DrawAuditRecord }> {
-    const res = await fetch(`${BASE_URL}/draws/${drawId}`);
-    if (!res.ok) throw new Error('Falha ao consultar sorteio.');
-    return res.json();
+    return requestJson<{ draw: DrawAuditRecord }>(`${BASE_URL}/draws/${drawId}`);
   },
 
   async verifyDraw(drawId: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/draws/${drawId}/verify`, {
+    return requestJson<any>(`${BASE_URL}/draws/${drawId}/verify`, {
       method: 'POST',
     });
-    if (!res.ok) throw new Error('Falha ao verificar matemática do sorteio.');
-    return res.json();
   },
 
   // Painel Administrativo
   async getAdminDashboard(): Promise<DashboardMetrics> {
-    const res = await fetch(`${BASE_URL}/admin/dashboard`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Falha ao carregar métricas administrativas.');
-    return json;
+    return requestJson<DashboardMetrics>(`${BASE_URL}/admin/dashboard`);
   },
 
   async getAdminPayments(limit = 100): Promise<{ payments: Payment[] }> {
-    const res = await fetch(`${BASE_URL}/admin/payments?limit=${limit}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Falha ao carregar pagamentos.');
-    return json;
+    return requestJson<{ payments: Payment[] }>(`${BASE_URL}/admin/payments?limit=${limit}`);
   },
 
   async getAdminParticipants(groupId?: string, q?: string): Promise<{ participants: Participant[] }> {
     const params = new URLSearchParams();
     if (groupId) params.append('groupId', groupId);
     if (q) params.append('q', q);
-    const res = await fetch(`${BASE_URL}/admin/participants?${params.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Falha ao carregar participantes.');
-    return json;
+    return requestJson<{ participants: Participant[] }>(`${BASE_URL}/admin/participants?${params.toString()}`);
   },
 
   async getAdminAuditLogs(limit = 100, type?: string, groupId?: string): Promise<{ logs: AuditLog[] }> {
@@ -140,21 +134,15 @@ export const api = {
     params.append('limit', String(limit));
     if (type) params.append('type', type);
     if (groupId) params.append('groupId', groupId);
-    const res = await fetch(`${BASE_URL}/admin/audit-logs?${params.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Falha ao carregar logs de auditoria.');
-    return json;
+    return requestJson<{ logs: AuditLog[] }>(`${BASE_URL}/admin/audit-logs?${params.toString()}`);
   },
 
   async updateGroupCapacity(groupId: string, capacity: number): Promise<{ group: Group }> {
-    const res = await fetch(`${BASE_URL}/admin/groups/${groupId}/capacity`, {
+    return requestJson<{ group: Group }>(`${BASE_URL}/admin/groups/${groupId}/capacity`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ capacity }),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao alterar capacidade.');
-    return json;
   },
 
   async getEligibleDrawData(groupId: string): Promise<{
@@ -171,102 +159,85 @@ export const api = {
     sampleNames: string[];
     promotionLegalStatus: string;
   }> {
-    const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/eligible`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao carregar dados do sorteio.');
-    return json;
+    return requestJson<{
+      groupId: string;
+      groupName: string;
+      capacity: number;
+      entryPriceCents: number;
+      prizeAmountCents: number;
+      status: string;
+      drawStatus: string;
+      alreadyDrawn: boolean;
+      eligibleParticipantsCount: number;
+      existingDraw: DrawAuditRecord | null;
+      sampleNames: string[];
+      promotionLegalStatus: string;
+    }>(`${BASE_URL}/admin/draws/${groupId}/eligible`);
   },
 
   async getAdminDrawsHistory(): Promise<{ draws: DrawAuditRecord[] }> {
-    const res = await fetch(`${BASE_URL}/admin/draws/history`);
-    if (!res.ok) throw new Error('Falha ao carregar histórico de sorteios.');
-    return res.json();
+    return requestJson<{ draws: DrawAuditRecord[] }>(`${BASE_URL}/admin/draws/history`);
   },
 
   async closeGroup(groupId: string): Promise<{ group: Group }> {
-    const res = await fetch(`${BASE_URL}/admin/groups/${groupId}/close`, {
+    return requestJson<{ group: Group }>(`${BASE_URL}/admin/groups/${groupId}/close`, {
       method: 'POST',
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao fechar grupo.');
-    return json;
   },
 
   async prepareDraw(groupId: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/prepare`, {
+    return requestJson<any>(`${BASE_URL}/admin/draws/${groupId}/prepare`, {
       method: 'POST',
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao preparar sorteio.');
-    return json;
   },
 
   async executeDraw(groupId: string, entropySeed?: string, forceRedraw = false): Promise<any> {
-    const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/execute`, {
+    return requestJson<any>(`${BASE_URL}/admin/draws/${groupId}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entropySeed, forceRedraw }),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao executar sorteio.');
-    return json;
   },
 
   async resetGroupDraw(groupId: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${BASE_URL}/admin/draws/${groupId}/reset`, {
+    return requestJson<{ success: boolean; message: string }>(`${BASE_URL}/admin/draws/${groupId}/reset`, {
       method: 'POST',
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao resetar sorteio para novo teste.');
-    return json;
   },
 
   async updateConfig(config: Partial<SystemConfig>): Promise<{ config: SystemConfig }> {
-    const res = await fetch(`${BASE_URL}/admin/config`, {
+    return requestJson<{ config: SystemConfig }>(`${BASE_URL}/admin/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao atualizar configurações.');
-    return json;
   },
 
   async simulateWebhookPayment(paymentId: string, repeatTimes = 1): Promise<any> {
-    const res = await fetch(`${BASE_URL}/admin/simulate-webhook`, {
+    return requestJson<any>(`${BASE_URL}/admin/simulate-webhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paymentId, repeatTimes }),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro na simulação do webhook.');
-    return json;
   },
 
   async runConcurrencyTest(): Promise<any> {
-    const res = await fetch(`${BASE_URL}/admin/test-concurrency`, {
+    return requestJson<any>(`${BASE_URL}/admin/test-concurrency`, {
       method: 'POST',
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro no teste de concorrência.');
-    return json;
   },
 
   async seed10kGroup(count = 10000): Promise<{ success: boolean; message: string; group: Group }> {
-    const res = await fetch(`${BASE_URL}/admin/seed-10k`, {
+    return requestJson<{ success: boolean; message: string; group: Group }>(`${BASE_URL}/admin/seed-10k`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count }),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erro ao gerar grupo de 10.000 pessoas.');
-    return json;
   },
 
   async resetDatabase(): Promise<any> {
-    const res = await fetch(`${BASE_URL}/admin/reset`, {
+    return requestJson<any>(`${BASE_URL}/admin/reset`, {
       method: 'POST',
     });
-    return res.json();
   },
 };

@@ -92,7 +92,7 @@ export const AdminDashboard: React.FC = () => {
 
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (retryCount = 2) => {
     try {
       setLoading(true);
       setDashboardError(null);
@@ -103,7 +103,13 @@ export const AdminDashboard: React.FC = () => {
       setEntryPriceInput(data.config.entryPriceCents || 100);
     } catch (err: any) {
       console.error('Erro ao carregar dashboard:', err);
-      setDashboardError(err.message || 'Erro ao carregar dados do painel.');
+      if (retryCount > 0) {
+        setTimeout(() => {
+          loadDashboard(retryCount - 1);
+        }, 800);
+      } else {
+        setDashboardError(err.message || 'Erro ao carregar dados do painel administrativo.');
+      }
     } finally {
       setLoading(false);
     }
@@ -422,7 +428,7 @@ export const AdminDashboard: React.FC = () => {
           {dashboardError || 'Ocorreu uma falha temporária ao obter os dados do servidor.'}
         </p>
         <button
-          onClick={loadDashboard}
+          onClick={() => loadDashboard(2)}
           className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer inline-flex items-center gap-2 shadow-lg shadow-emerald-600/20"
         >
           <RefreshCw className="w-4 h-4" />

@@ -4,28 +4,26 @@
     <script>
       (function () {
         try {
-          var nativeFetch = typeof window !== 'undefined' ? window.fetch : null;
-          var _currentFetch = nativeFetch ? nativeFetch.bind(window) : null;
+          var realFetch = typeof window !== 'undefined' && window.fetch ? window.fetch : null;
+          var customFetch = null;
           Object.defineProperty(window, 'fetch', {
             get: function () {
-              return _currentFetch || (nativeFetch ? nativeFetch.bind(window) : undefined);
+              return function () {
+                var target = customFetch || realFetch || (typeof window !== 'undefined' ? window.fetch : null);
+                if (typeof target === 'function') {
+                  return target.apply(window, arguments);
+                }
+                return Promise.reject(new Error('Fetch API não disponível.'));
+              };
             },
-            set: function (newFetch) {
-              _currentFetch = newFetch;
+            set: function (fn) {
+              customFetch = fn;
             },
             configurable: true,
             enumerable: true,
           });
         } catch (e) {
-          try {
-            var orig = window.fetch;
-            Object.defineProperty(window, 'fetch', {
-              value: orig,
-              writable: true,
-              configurable: true,
-              enumerable: true,
-            });
-          } catch (err) {}
+          // Ignorar se não configurável
         }
       })();
     </script>

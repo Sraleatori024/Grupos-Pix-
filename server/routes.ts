@@ -851,3 +851,15 @@ router.post('/admin/reset', checkAdminAuth, (_req: Request, res: Response) => {
   db.resetDatabase();
   res.json({ success: true, message: 'Banco de dados reinicializado com sucesso.' });
 });
+
+// Fallback 404 para rotas /api não encontradas
+router.use((_req: Request, res: Response) => {
+  res.status(404).json({ error: 'Endpoint da API não encontrado.' });
+});
+
+// Tratamento de erros interno para /api
+router.use((err: any, _req: Request, res: Response, _next: any) => {
+  console.error('[API Error Handler]:', err);
+  res.status(500).json({ error: err?.message || 'Erro interno no servidor da API.' });
+});
+
