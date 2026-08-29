@@ -1,32 +1,6 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
-    <script>
-      (function () {
-        try {
-          var realFetch = typeof window !== 'undefined' && window.fetch ? window.fetch : null;
-          var customFetch = null;
-          Object.defineProperty(window, 'fetch', {
-            get: function () {
-              return function () {
-                var target = customFetch || realFetch || (typeof window !== 'undefined' ? window.fetch : null);
-                if (typeof target === 'function') {
-                  return target.apply(window, arguments);
-                }
-                return Promise.reject(new Error('Fetch API não disponível.'));
-              };
-            },
-            set: function (fn) {
-              customFetch = fn;
-            },
-            configurable: true,
-            enumerable: true,
-          });
-        } catch (e) {
-          // Ignorar se não configurável
-        }
-      })();
-    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Plataforma de Grupos Pix e Sorteios Auditáveis</title>
