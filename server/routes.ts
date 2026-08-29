@@ -357,6 +357,12 @@ router.post('/draws/:id/verify', (req: Request, res: Response) => {
 
 // --- ROTAS ADMINISTRATIVAS ---
 
+// Alias raiz para /api/admin -> retorna dados do dashboard diretamente
+router.get('/admin', checkAdminAuth, (_req: Request, res: Response) => {
+  const metrics = db.getDashboardMetrics();
+  res.json(metrics);
+});
+
 // Painel Dashboard Administrativo com Métricas
 router.get('/admin/dashboard', checkAdminAuth, (_req: Request, res: Response) => {
   const metrics = db.getDashboardMetrics();

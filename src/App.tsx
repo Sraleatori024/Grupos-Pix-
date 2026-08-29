@@ -62,7 +62,50 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'groups' | 'my-numbers' | 'draws' | 'admin' | 'compliance'>('groups');
+  const getInitialTab = (): 'groups' | 'my-numbers' | 'draws' | 'admin' | 'compliance' => {
+    if (typeof window === 'undefined') return 'groups';
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase().replace('#', '');
+    
+    if (path.includes('/admin') || path.includes('/dashboard') || path.includes('/administrativo') || hash === 'admin' || hash === 'dashboard') {
+      return 'admin';
+    }
+    if (path.includes('/my-numbers') || path.includes('/meus-numeros') || path.includes('/participante') || hash === 'my-numbers' || hash === 'meus-numeros') {
+      return 'my-numbers';
+    }
+    if (path.includes('/draws') || path.includes('/sorteios') || hash === 'draws' || hash === 'sorteios') {
+      return 'draws';
+    }
+    if (path.includes('/compliance') || path.includes('/legal') || hash === 'compliance' || hash === 'legal') {
+      return 'compliance';
+    }
+    return 'groups';
+  };
+
+  const [activeTab, setActiveTabState] = useState<'groups' | 'my-numbers' | 'draws' | 'admin' | 'compliance'>(getInitialTab);
+
+  const setActiveTab = (tab: 'groups' | 'my-numbers' | 'draws' | 'admin' | 'compliance') => {
+    setActiveTabState(tab);
+    if (typeof window !== 'undefined') {
+      const targetHash = tab === 'groups' ? '' : `#${tab}`;
+      const newUrl = `${window.location.pathname}${targetHash}`;
+      if (window.location.hash !== targetHash) {
+        window.history.replaceState(null, '', newUrl || window.location.pathname);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTabState(getInitialTab());
+    };
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handlePopState);
+    };
+  }, []);
   const [groups, setGroups] = useState<Group[]>([]);
   const [config, setConfig] = useState<Partial<SystemConfig>>({
     entryPriceCents: 100,
