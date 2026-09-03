@@ -17,7 +17,6 @@ export interface SyncPayConfig {
   baseUrl: string;
   clientId: string;
   clientSecret: string;
-  publicApiKey: string;
   webhookSecret: string;
   webhookUrl: string;
   timeoutMs: number;
@@ -52,7 +51,7 @@ export interface CashInPixResponse {
  * 
  * Regras de Arquitetura e Segurança:
  * 1. O SYNCPAY_CLIENT_SECRET e SYNCPAY_CLIENT_ID NUNCA são expostos ao frontend.
- * 2. SYNCPAY_API_PUBLIC é mantida disponível no ambiente do backend.
+ * 2. A autenticação com a API SyncPayments utiliza exclusivamente SYNCPAY_CLIENT_ID e SYNCPAY_CLIENT_SECRET.
  * 3. O access_token é gerenciado estritamente em memória no backend.
  * 4. Cache inteligente com renovação antecipada (margem de segurança de 120s).
  * 5. Deduplicação atômica de requisições de token concorrentes.
@@ -99,12 +98,6 @@ export class SyncPayService {
       ''
     ).trim();
 
-    const publicApiKey = (
-      process.env.SYNCPAY_API_PUBLIC ||
-      process.env.SYNCPAY_PUBLIC_KEY ||
-      ''
-    ).trim();
-
     const webhookSecret = (
       process.env.SYNCPAY_WEBHOOK_SECRET ||
       process.env.SYNCPAYMENTS_WEBHOOK_SECRET ||
@@ -129,7 +122,6 @@ export class SyncPayService {
       baseUrl,
       clientId,
       clientSecret,
-      publicApiKey,
       webhookSecret,
       webhookUrl,
       timeoutMs: 15000,
@@ -151,7 +143,6 @@ export class SyncPayService {
     configured: boolean;
     baseUrl: string;
     hasToken: boolean;
-    hasPublicApiKey: boolean;
     tokenExpiresInSeconds?: number;
     expiresAt?: string;
     webhookUrl: string;
@@ -171,7 +162,6 @@ export class SyncPayService {
       configured: this.isConfigured(),
       baseUrl: config.baseUrl,
       hasToken,
-      hasPublicApiKey: Boolean(config.publicApiKey),
       tokenExpiresInSeconds,
       expiresAt,
       webhookUrl: config.webhookUrl,
