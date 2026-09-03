@@ -24,13 +24,13 @@ export class WebhookVerifier {
    */
   public static getWebhookSecret(): string {
     return (
-      process.env.D5PAY_WEBHOOK_SECRET ||
-      process.env.SYNCPAYMENTS_WEBHOOK_SECRET ||
       process.env.SYNCPAY_WEBHOOK_SECRET ||
+      process.env.SYNCPAYMENTS_WEBHOOK_SECRET ||
+      process.env.D5PAY_WEBHOOK_SECRET ||
       process.env.PIX_WEBHOOK_SECRET ||
       process.env.WEBHOOK_SECRET ||
-      'sec_syncpayments_default_key_change_in_production'
-    );
+      ''
+    ).trim();
   }
 
   /**

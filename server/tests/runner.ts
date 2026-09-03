@@ -1,7 +1,10 @@
-import { db } from '../db.js';
+import { Database } from '../db.js';
 import { executeDeterministicDraw, verifyDrawResult } from '../drawEngine.js';
 import { Participant } from '../types.js';
 import { d5payService } from '../d5payService.js';
+
+// Instância isolada exclusiva para execução de testes unitários/integrados
+const db = new Database();
 
 async function runAllTests() {
   console.log('====================================================');

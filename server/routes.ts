@@ -121,40 +121,33 @@ router.post('/payments/create', async (req: Request, res: Response) => {
     const cleanEmail = String(userEmail || '').trim().toLowerCase() || `${cleanPhone}@participante.plataforma.com`;
 
     // Integração Oficial SyncPayments (POST /api/partner/v1/cash-in)
-    if (syncpayService.isConfigured()) {
-      try {
-        const cashIn = await syncpayService.createCashInPix({
-          amount: Number((amountCents / 100).toFixed(2)),
-          description: `Participacao Grupo ${group.name.slice(0, 50)}`,
-          client: {
-            name: cleanName,
-            cpf: cleanCpf,
-            email: cleanEmail,
-            phone: cleanPhone,
-          },
-        });
-
-        pixCopiaECola = cashIn.pix_code;
-        gatewayTransactionId = cashIn.identifier;
-        syncpayIdentifier = cashIn.identifier;
-        pixQrCode = await generatePixQrCodeDataUrl(cashIn.pix_code);
-      } catch (syncPayErr: any) {
-        console.error('Erro na chamada SyncPayments createCashInPix:', syncPayErr.message);
-        return res.status(502).json({
-          error: `Erro ao gerar cobrança Pix via SyncPayments: ${syncPayErr.message}`,
-        });
-      }
-    } else {
-      // Modo de contingência para ambiente local sem credenciais cadastradas
-      syncpayIdentifier = gatewayTransactionId;
-      pixCopiaECola = generatePixPayload({
-        pixKey: 'financeiro@plataformagrupos.com.br',
-        merchantName: 'Plataforma Grupos Pix BR',
-        merchantCity: 'SAO PAULO',
-        txId: paymentId.replace(/[^A-Za-z0-9]/g, '').substring(0, 25),
-        amountCents,
+    if (!syncpayService.isConfigured()) {
+      return res.status(503).json({
+        error: 'Gateway SyncPayments não configurado no servidor. Cadastre as variáveis SYNCPAY_CLIENT_ID e SYNCPAY_CLIENT_SECRET na Vercel para habilitar a geração de cobranças Pix oficiais.',
       });
-      pixQrCode = await generatePixQrCodeDataUrl(pixCopiaECola);
+    }
+
+    try {
+      const cashIn = await syncpayService.createCashInPix({
+        amount: Number((amountCents / 100).toFixed(2)),
+        description: `Participacao Grupo ${group.name.slice(0, 50)}`,
+        client: {
+          name: cleanName,
+          cpf: cleanCpf,
+          email: cleanEmail,
+          phone: cleanPhone,
+        },
+      });
+
+      pixCopiaECola = cashIn.pix_code;
+      gatewayTransactionId = cashIn.identifier;
+      syncpayIdentifier = cashIn.identifier;
+      pixQrCode = await generatePixQrCodeDataUrl(cashIn.pix_code);
+    } catch (syncPayErr: any) {
+      console.error('Erro na chamada SyncPayments createCashInPix:', syncPayErr.message);
+      return res.status(502).json({
+        error: `Erro ao gerar cobrança Pix via SyncPayments: ${syncPayErr.message}`,
+      });
     }
 
     const now = new Date();
@@ -316,8 +309,11 @@ const handleSyncPayWebhook = async (req: Request, res: Response) => {
     // 1. Validação de Assinatura e Autenticidade do Gateway
     const verification = WebhookVerifier.verifyRequest(req);
     if (!verification.isValid) {
-      return res.status(401).json({
-        error: 'Assinatura do webhook SyncPayments inválida ou ausente.',
+      const isMissingSecret = verification.reason?.includes('não configurada');
+      return res.status(isMissingSecret ? 500 : 401).json({
+        error: isMissingSecret
+          ? 'Chave secreta de validação do webhook ausente no servidor (configure PIX_WEBHOOK_SECRET ou SYNCPAY_WEBHOOK_SECRET na Vercel).'
+          : 'Assinatura do webhook SyncPayments inválida ou ausente.',
         reason: verification.reason,
       });
     }
@@ -342,10 +338,19 @@ const handleSyncPayWebhook = async (req: Request, res: Response) => {
       });
     }
 
-    // 3. Validação rigorosa do status oficial da transação
+    // 3. REGRA OBRIGATÓRIA: Localização de Cobrança Prévia no Banco
+    // Um webhook NUNCA deve criar/aprovar uma participação sem uma cobrança prévia vinculada
+    const payment = db.getPaymentByGatewayTxId(gatewayTransactionId);
+    if (!payment) {
+      return res.status(404).json({
+        error: `SyncPayments: Nenhuma cobrança registrada com o identificador "${gatewayTransactionId}". O webhook foi rejeitado e nenhuma participação foi gerada.`,
+      });
+    }
+
+    // 4. Validação rigorosa do status oficial da transação
     // Conforme documentação: status pode ser "pending", "completed", etc.
     const rawStatus = String(body.status || body.data?.status || '').toLowerCase().trim();
-    const isCompleted = rawStatus === 'completed' || rawStatus === 'paid' || rawStatus === 'approved';
+    const isCompleted = rawStatus === 'completed' || rawStatus === 'paid';
 
     // Regra mandatória: NÃO confirmar pagamento se o status não for estritamente concluído
     if (!isCompleted) {
@@ -353,17 +358,31 @@ const handleSyncPayWebhook = async (req: Request, res: Response) => {
         received: true,
         confirmed: false,
         status: rawStatus || 'unknown',
-        message: `Evento SyncPayments registrado com status "${rawStatus || 'desconhecido'}". Pagamento permanece pendente aguardando status oficial 'completed'.`,
+        message: `Evento SyncPayments registrado com status "${rawStatus || 'desconhecido'}". O pagamento permanece pendente e nenhum número de sorte foi emitido.`,
       });
     }
 
-    // 4. Determinação do valor em centavos
-    let paidAmountCents = 100;
+    // 5. Determinação e conferência estrita do valor em centavos
+    let paidAmountCents = payment.amountCents;
     if (typeof body.amount === 'number') {
-      // Se for decimal em Reais (ex: 14.67 ou 1.00 ou 197)
       paidAmountCents = Math.round(body.amount * 100);
     } else if (typeof body.data?.amount_cents === 'number') {
       paidAmountCents = body.data.amount_cents;
+    } else if (typeof body.data?.amount === 'number') {
+      paidAmountCents = Math.round(body.data.amount * 100);
+    }
+
+    if (paidAmountCents > 0 && paidAmountCents !== payment.amountCents) {
+      return res.status(422).json({
+        error: `SyncPayments: Divergência de valor. Webhook informou ${paidAmountCents} centavos, mas a cobrança exige ${payment.amountCents} centavos.`,
+      });
+    }
+
+    // 6. Verificação de Expiração da Cobrança
+    if (payment.expiresAt && new Date(payment.expiresAt).getTime() < Date.now() && payment.status !== 'PAID') {
+      return res.status(410).json({
+        error: `Cobrança ${payment.paymentId} expirou antes da confirmação do pagamento.`,
+      });
     }
 
     // Identificador único do evento para garantia de idempotência
@@ -374,7 +393,7 @@ const handleSyncPayWebhook = async (req: Request, res: Response) => {
       `EVT-SYNCPAY-${gatewayTransactionId}-${rawStatus}`
     );
 
-    // 5. Processamento Atômico e Idempotente no Banco
+    // 7. Processamento Atômico e Idempotente no Banco
     const result = await db.processPaidWebhook({
       gatewayTransactionId,
       rawEventId,

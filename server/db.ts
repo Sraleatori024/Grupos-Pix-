@@ -100,6 +100,11 @@ export class Database {
     return this.groupMutexes.get(groupId)!;
   }
 
+  public reset(): void {
+    this.data = this.initializeDefaultState();
+    this.groupMutexes.clear();
+  }
+
   private initializeDefaultState(): DatabaseSchema {
     const defaultState: DatabaseSchema = {
       groups: {},
@@ -440,8 +445,20 @@ export class Database {
       return {
         success: false,
         alreadyProcessed: false,
-        reason: `Cobrança com gatewayTransactionId ${gatewayTransactionId} não foi localizada.`,
+        reason: `Cobrança com gatewayTransactionId ${gatewayTransactionId} não foi localizada no banco de dados. O webhook não pode criar participantes sem uma cobrança prévia vinculada.`,
       };
+    }
+
+    // 2.1. Validação estrita de valor financeiro: valor pago pelo webhook DEVE corresponder ao valor da cobrança
+    if (typeof paidAmountCents === 'number' && paidAmountCents > 0 && payment.amountCents > 0) {
+      if (paidAmountCents !== payment.amountCents) {
+        return {
+          success: false,
+          alreadyProcessed: false,
+          reason: `Valor pago informado no webhook (${paidAmountCents} centavos) diverge do valor original da cobrança (${payment.amountCents} centavos). Pagamento rejeitado por inconsistência de valor.`,
+          payment,
+        };
+      }
     }
 
     // 3. Se o pagamento já estiver PAID, registra o evento de idempotência e retorna

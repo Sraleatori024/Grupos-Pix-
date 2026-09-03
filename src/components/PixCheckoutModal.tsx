@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   AlertCircle,
   Sparkles,
-  Zap,
   ArrowRight,
   RefreshCw,
   ExternalLink,
@@ -44,7 +43,6 @@ export const PixCheckoutModal: React.FC<PixCheckoutModalProps> = ({
   const [confirmedParticipant, setConfirmedParticipant] = useState<Participant | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [simulatingWebhook, setSimulatingWebhook] = useState(false);
   const [pollCount, setPollCount] = useState(0);
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -158,25 +156,6 @@ export const PixCheckoutModal: React.FC<PixCheckoutModalProps> = ({
     navigator.clipboard.writeText(group.groupLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
-  };
-
-  // Simulador de Webhook do Gateway (para testes e homologação rápida)
-  const handleSimulateWebhook = async () => {
-    if (!payment) return;
-    try {
-      setSimulatingWebhook(true);
-      await api.simulateWebhookPayment(payment.paymentId, 1);
-      const res = await api.getPaymentStatus(payment.paymentId);
-      if (res.payment.status === 'PAID' && res.participant) {
-        setPayment(res.payment);
-        setConfirmedParticipant(res.participant);
-        onSuccess(res.payment, res.participant);
-      }
-    } catch (err: any) {
-      alert('Erro na simulação do webhook: ' + err.message);
-    } finally {
-      setSimulatingWebhook(false);
-    }
   };
 
   return (
@@ -391,23 +370,6 @@ export const PixCheckoutModal: React.FC<PixCheckoutModalProps> = ({
                   <Clock className="w-3 h-3" />
                   <span>30 min</span>
                 </div>
-              </div>
-
-              {/* Botão de Simulação do Gateway para Testes */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-                  <span className="font-semibold text-slate-300">Ambiente de Testes / Sandbox</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400">Simulador</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSimulateWebhook}
-                  disabled={simulatingWebhook}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-semibold text-xs transition-all cursor-pointer"
-                >
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  {simulatingWebhook ? 'Processando Webhook...' : 'Simular Pagamento Aprovado (Webhook)'}
-                </button>
               </div>
             </div>
           )}
