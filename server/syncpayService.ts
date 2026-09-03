@@ -83,7 +83,7 @@ export class SyncPayService {
       process.env.SYNCPAY_BASE_URL ||
       process.env.SYNCPAYMENTS_BASE_URL ||
       process.env.D5PAY_BASE_URL ||
-      'https://api.d5pay.com'
+      'https://api.syncpayments.com.br/'
     ).replace(/\/$/, '');
 
     const clientId = (
