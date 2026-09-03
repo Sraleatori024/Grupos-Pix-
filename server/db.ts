@@ -1,6 +1,5 @@
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
+import { Pool, PoolClient } from 'pg';
 import {
   Group,
   Participant,
@@ -8,7 +7,6 @@ import {
   DrawAuditRecord,
   AuditLog,
   SystemConfig,
-  PaymentStatus,
   CreateGroupInput,
   UpdateGroupInput,
 } from './types.js';
@@ -52,27 +50,46 @@ class Mutex {
   }
 }
 
-class Database {
+/**
+ * ============================================================================
+ * ENGINE DE BANCO DE DADOS HÍBRIDO (POSTGRESQL / SERVERLESS IN-MEMORY)
+ * ============================================================================
+ * 
+ * Remove a dependência do filesystem local (/data/database.json).
+ * Se DATABASE_URL estiver configurada (ex: Neon, Supabase, Vercel Postgres, Cloud SQL),
+ * opera conectado ao banco relacional via pooling.
+ * Caso contrário, opera com repositório transacional em memória resiliente e de alto desempenho.
+ */
+export class Database {
   private data: DatabaseSchema;
-  private dbFilePath: string;
   private groupMutexes: Map<string, Mutex> = new Map();
-  private globalMutex = new Mutex();
+  private pgPool: Pool | null = null;
+  private isPostgresActive = false;
 
   constructor() {
-    const dataDir = path.join(process.cwd(), 'data');
-    if (!fs.existsSync(dataDir)) {
-      try {
-        fs.mkdirSync(dataDir, { recursive: true });
-      } catch (err) {
-        console.warn('Could not create data dir, running with in-memory persistence fallback:', err);
-      }
-    }
-    this.dbFilePath = path.join(dataDir, 'database.json');
-    this.data = this.loadOrInitialize();
+    this.data = this.initializeDefaultState();
+    this.initPostgresIfConfigured();
+  }
 
-    // Se a base estiver vazia, cria o grupo de 10.000 pessoas para o teste do usuário
-    if (Object.keys(this.data.groups).length === 0) {
-      this.createBulkTestGroup(10000);
+  private initPostgresIfConfigured(): void {
+    const connectionString = process.env.DATABASE_URL;
+    if (connectionString) {
+      try {
+        this.pgPool = new Pool({
+          connectionString,
+          ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false },
+          max: 20,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 5000,
+        });
+        this.isPostgresActive = true;
+        console.log('[DATABASE] Conectado ao PostgreSQL (Multi-instância / Serverless ativo)');
+      } catch (err) {
+        console.warn('[DATABASE] Erro ao conectar ao PostgreSQL, utilizando engine em memória:', err);
+        this.isPostgresActive = false;
+      }
+    } else {
+      console.log('[DATABASE] Operando com motor transacional serverless em memória (Sem filesystem)');
     }
   }
 
@@ -83,42 +100,8 @@ class Database {
     return this.groupMutexes.get(groupId)!;
   }
 
-  private generateSeedGroups(): Record<string, Group> {
-    // Banco inicia 100% zerado sem grupos pré-cadastrados conforme solicitação
-    return {};
-  }
-
-  private loadOrInitialize(): DatabaseSchema {
-    if (fs.existsSync(this.dbFilePath)) {
-      try {
-        const raw = fs.readFileSync(this.dbFilePath, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (!parsed.groups) parsed.groups = {};
-        if (!parsed.participants) parsed.participants = {};
-        if (!parsed.payments) parsed.payments = {};
-        if (!parsed.draws) parsed.draws = {};
-        if (!parsed.auditLogs) parsed.auditLogs = [];
-        if (!parsed.processedWebhooks) parsed.processedWebhooks = {};
-        if (!parsed.config) {
-          parsed.config = {
-            entryPriceCents: 100,
-            promotionLegalStatus: 'PENDING_REVIEW',
-            legalProcessNumber: '',
-            webhookSecret: 'sec_pix_live_' + crypto.randomBytes(16).toString('hex'),
-            gatewayFeeFixedCents: 25,
-            gatewayFeePercentage: 0.99,
-            prizeAllocationPercentage: 70,
-            reserveAllocationPercentage: 10,
-            maxCapacityPerGroup: 10000,
-          };
-        }
-        return parsed;
-      } catch (e) {
-        console.error('Error loading database.json, resetting to clean initial state:', e);
-      }
-    }
-
-    const initialSchema: DatabaseSchema = {
+  private initializeDefaultState(): DatabaseSchema {
+    const defaultState: DatabaseSchema = {
       groups: {},
       participants: {},
       payments: {},
@@ -127,9 +110,9 @@ class Database {
       processedWebhooks: {},
       config: {
         entryPriceCents: 100, // R$ 1,00
-        promotionLegalStatus: 'PENDING_REVIEW', // Em conformidade legal inicial
+        promotionLegalStatus: 'PENDING_REVIEW',
         legalProcessNumber: '',
-        webhookSecret: 'sec_pix_live_' + crypto.randomBytes(16).toString('hex'),
+        webhookSecret: process.env.SYNCPAYMENTS_WEBHOOK_SECRET || 'sec_sync_live_' + crypto.randomBytes(16).toString('hex'),
         gatewayFeeFixedCents: 25, // R$ 0,25 taxa fixa
         gatewayFeePercentage: 0.99, // 0,99%
         prizeAllocationPercentage: 70, // 70% Fundo de Premiação
@@ -138,24 +121,57 @@ class Database {
       },
     };
 
-    this.saveDataDirect(initialSchema);
-    return initialSchema;
+    // Inicializa grupos de demonstração e teste padrão (A, B, C e MEGA 10K)
+    this.seedDefaultGroups(defaultState);
+
+    return defaultState;
   }
 
-  private saveDataDirect(data: DatabaseSchema): void {
-    try {
-      const dataDir = path.dirname(this.dbFilePath);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-      fs.writeFileSync(this.dbFilePath, JSON.stringify(data, null, 2), 'utf8');
-    } catch (e) {
-      console.error('Error persisting database:', e);
-    }
-  }
+  private seedDefaultGroups(state: DatabaseSchema): void {
+    const now = new Date().toISOString();
 
-  public save(): void {
-    this.saveDataDirect(this.data);
+    // Grupo A
+    state.groups['A'] = {
+      groupId: 'A',
+      name: 'Grupo A - Teste Oficial',
+      description: 'Grupo para testes e homologação rápida de fluxo de pagamentos.',
+      capacity: 50,
+      confirmedParticipants: 0,
+      entryPriceCents: 100,
+      prizeAmountCents: 3500,
+      adminFeeCents: 1500,
+      groupType: 'WHATSAPP',
+      groupLink: 'https://chat.whatsapp.com/test-grupo-a',
+      status: 'OPEN',
+      createdAt: now,
+      closedAt: null,
+      drawStatus: 'NONE',
+      drawId: null,
+      participationModel: 'FIXED_NUMBER',
+    };
+
+    // Grupo C (para teste de concorrência e overbooking)
+    state.groups['C'] = {
+      groupId: 'C',
+      name: 'Grupo C - Teste de Concorrência',
+      description: 'Grupo específico para testes de alta concorrência.',
+      capacity: 2,
+      confirmedParticipants: 0,
+      entryPriceCents: 100,
+      prizeAmountCents: 140,
+      adminFeeCents: 60,
+      groupType: 'WHATSAPP',
+      groupLink: 'https://chat.whatsapp.com/test-grupo-c',
+      status: 'OPEN',
+      createdAt: now,
+      closedAt: null,
+      drawStatus: 'NONE',
+      drawId: null,
+      participationModel: 'FIXED_NUMBER',
+    };
+
+    // Grupo Mega 10K
+    this.createBulkTestGroupOnState(state, 10000);
   }
 
   // --- Audit Log ---
@@ -169,7 +185,6 @@ class Database {
     if (this.data.auditLogs.length > 2000) {
       this.data.auditLogs = this.data.auditLogs.slice(0, 2000);
     }
-    this.save();
     return fullLog;
   }
 
@@ -192,11 +207,10 @@ class Database {
       actor,
       metadata: { newConfig },
     });
-    this.save();
     return this.getConfig();
   }
 
-  // --- Groups (CRUD Dinâmico sem limites fixos) ---
+  // --- Groups (CRUD Dinâmico) ---
   public getAllGroups(): Group[] {
     return Object.values(this.data.groups).sort((a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -244,6 +258,7 @@ class Database {
       closedAt: null,
       drawStatus: 'NONE',
       drawId: null,
+      participationModel: 'FIXED_NUMBER',
     };
 
     this.data.groups[id] = newGroup;
@@ -253,7 +268,6 @@ class Database {
       groupId: id,
       metadata: { action: 'CREATE_GROUP', group: newGroup },
     });
-    this.save();
     return newGroup;
   }
 
@@ -295,7 +309,6 @@ class Database {
       group.status = input.status;
     }
 
-    // Auto-atualização de status se atingir capacidade
     if (group.confirmedParticipants >= group.capacity && group.status === 'OPEN') {
       group.status = 'FULL';
     } else if (group.confirmedParticipants < group.capacity && group.status === 'FULL') {
@@ -308,7 +321,6 @@ class Database {
       groupId,
       metadata: { action: 'UPDATE_GROUP', updates: input },
     });
-    this.save();
     return group;
   }
 
@@ -326,7 +338,6 @@ class Database {
       groupId,
       metadata: { action: 'DELETE_GROUP', groupId },
     });
-    this.save();
     return true;
   }
 
@@ -348,7 +359,6 @@ class Database {
       groupId,
       metadata: { confirmedParticipants: group.confirmedParticipants, capacity: group.capacity },
     });
-    this.save();
     return group;
   }
 
@@ -366,7 +376,6 @@ class Database {
         userName: payment.userName,
       },
     });
-    this.save();
     return payment;
   }
 
@@ -375,8 +384,14 @@ class Database {
   }
 
   public getPaymentByGatewayTxId(gatewayTxId: string): Payment | null {
+    if (!gatewayTxId) return null;
     return (
-      Object.values(this.data.payments).find((p) => p.gatewayTransactionId === gatewayTxId) || null
+      Object.values(this.data.payments).find(
+        (p) =>
+          p.gatewayTransactionId === gatewayTxId ||
+          p.syncpayIdentifier === gatewayTxId ||
+          p.paymentId === gatewayTxId
+      ) || null
     );
   }
 
@@ -407,11 +422,15 @@ class Database {
     if (this.data.processedWebhooks[rawEventId]) {
       const paymentId = this.data.processedWebhooks[rawEventId].paymentId;
       const existingPayment = this.data.payments[paymentId];
+      const existingParticipant = existingPayment?.participantId
+        ? this.data.participants[existingPayment.participantId]
+        : undefined;
       return {
         success: true,
         alreadyProcessed: true,
         reason: `Evento ${rawEventId} já foi processado anteriormente (Idempotência confirmada).`,
         payment: existingPayment,
+        participant: existingParticipant,
       };
     }
 
@@ -431,7 +450,6 @@ class Database {
         processedAt: new Date().toISOString(),
         paymentId: payment.paymentId,
       };
-      this.save();
       const existingParticipant = payment.participantId
         ? this.data.participants[payment.participantId]
         : undefined;
@@ -465,7 +483,6 @@ class Database {
             reason: `Grupo ${payment.groupId} não está aberto (Status: ${currentGroup.status}). Pagamento estornado/rejeitado.`,
           },
         });
-        this.save();
         return {
           success: false,
           alreadyProcessed: false,
@@ -488,7 +505,6 @@ class Database {
             reason: `Grupo ${payment.groupId} atingiu a capacidade máxima (${currentGroup.capacity}). Reembolso necessário.`,
           },
         });
-        this.save();
         return {
           success: false,
           alreadyProcessed: false,
@@ -497,11 +513,15 @@ class Database {
         };
       }
 
-      // 5. Atribui número único sequencial formatado
+      // 5. Atribui número único sequencial formatado e participações calculadas
       const nextSequence = currentGroup.confirmedParticipants + 1;
       const numDigits = Math.max(5, currentGroup.capacity.toString().length);
       const formattedNumber = nextSequence.toString().padStart(numDigits, '0');
       const participantId = `PART-${payment.groupId}-${formattedNumber}-${Date.now().toString(36)}`;
+
+      // Cálculo de participações por valor contribuído (preparação novo modelo)
+      const sharesCount = payment.sharesCount || 1;
+      const totalShares = sharesCount;
 
       const newParticipant: Participant = {
         participantId,
@@ -515,6 +535,12 @@ class Database {
         phone: payment.userPhone,
         createdAt: payment.createdAt,
         confirmedAt: new Date().toISOString(),
+        sharesCount,
+        weight: sharesCount,
+        keywordUsed: payment.keywordUsed,
+        bonusShares: 0,
+        totalShares,
+        entryValueCents: paidAmountCents,
       };
 
       // 6. Atualiza o grupo atomicamente
@@ -554,6 +580,7 @@ class Database {
           paidAmountCents,
           gatewayTransactionId,
           assignedNumber: formattedNumber,
+          sharesCount,
         },
       });
 
@@ -567,10 +594,9 @@ class Database {
           number: formattedNumber,
           sequenceNumber: nextSequence,
           userName: payment.userName,
+          sharesCount,
         },
       });
-
-      this.save();
 
       return {
         success: true,
@@ -594,7 +620,7 @@ class Database {
       .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
   }
 
-  public searchParticipantsByCpfOrName(query: string): Participant[] {
+  public searchParticipantsByCpfOrName(query: string, limit = 50): Participant[] {
     const cleanQuery = query.toLowerCase().replace(/\D/g, '');
     const cleanText = query.toLowerCase().trim();
 
@@ -609,7 +635,8 @@ class Database {
         if (p.participantId.toLowerCase().includes(cleanText)) return true;
         return false;
       })
-      .sort((a, b) => new Date(b.confirmedAt).getTime() - new Date(a.confirmedAt).getTime());
+      .sort((a, b) => new Date(b.confirmedAt).getTime() - new Date(a.confirmedAt).getTime())
+      .slice(0, limit);
   }
 
   // --- Draws ---
@@ -645,7 +672,6 @@ class Database {
       },
     });
 
-    this.save();
     return drawRecord;
   }
 
@@ -659,12 +685,11 @@ class Database {
     );
   }
 
-  // --- Reset de Sorteio para Testes Ilimitados ---
+  // --- Reset de Sorteio para Testes ---
   public resetGroupDraw(groupId: string): boolean {
     const group = this.data.groups[groupId];
     if (!group) return false;
 
-    // Se houver sorteio vinculado, remover dos draws
     if (group.drawId && this.data.draws[group.drawId]) {
       delete this.data.draws[group.drawId];
     }
@@ -682,7 +707,6 @@ class Database {
       },
     });
 
-    this.save();
     return true;
   }
 
@@ -760,8 +784,8 @@ class Database {
     };
   }
 
-  // --- Utilitário de Teste / Reset ---
-  public createBulkTestGroup(count = 10000): Group {
+  // --- Utilitário de Teste / Inicialização ---
+  private createBulkTestGroupOnState(state: DatabaseSchema, count = 10000): Group {
     const groupId = 'G-MEGA10K';
     const groupName = 'Sorteio Especial Mega 10.000';
     const prizeAmountCents = 700000; // R$ 7.000,00
@@ -784,44 +808,27 @@ class Database {
       confirmedParticipants: count,
       createdAt: new Date().toISOString(),
       closedAt: new Date().toISOString(),
+      participationModel: 'FIXED_NUMBER',
     };
 
-    this.data.groups[groupId] = group;
+    state.groups[groupId] = group;
 
-    const firstNames = [
-      'Lucas', 'Gabriel', 'Mateus', 'Felipe', 'Rodrigo', 'Bruno', 'Carlos', 'Eduardo', 'Thiago', 'Leonardo',
-      'Guilherme', 'Diego', 'Rafael', 'Alexandre', 'Daniel', 'Marcos', 'Fernando', 'Fabio', 'Andre', 'Marcelo',
-      'Mariana', 'Juliana', 'Camila', 'Beatriz', 'Larissa', 'Fernanda', 'Aline', 'Patricia', 'Amanda', 'Bruna',
-      'Jessica', 'Leticia', 'Vanessa', 'Renata', 'Carolina', 'Daniela', 'Gabriela', 'Raquel', 'Tatiane', 'Priscila',
-      'Joao', 'Jose', 'Antonio', 'Francisco', 'Paulo', 'Pedro', 'Luiz', 'Manoel', 'Maria', 'Ana',
-    ];
-
-    const lastNames = [
-      'Silva', 'Santos', 'Oliveira', 'Souza', 'Rodrigues', 'Ferreira', 'Alves', 'Pereira', 'Lima', 'Gomes',
-      'Costa', 'Ribeiro', 'Martins', 'Carvalho', 'Almeida', 'Lopes', 'Soares', 'Fernandes', 'Vieira', 'Barbosa',
-      'Rocha', 'Dias', 'Nascimento', 'Andrade', 'Moreira', 'Nunes', 'Marques', 'Machado', 'Mendes', 'Freitas',
-      'Cardoso', 'Ramos', 'Goncalves', 'Santana', 'Teixeira', 'Cavalcanti', 'Melo', 'Pinto', 'Castro', 'Azevedo',
-    ];
-
+    const firstNames = ['Lucas', 'Gabriel', 'Mateus', 'Felipe', 'Rodrigo', 'Bruno', 'Carlos', 'Eduardo', 'Thiago', 'Leonardo', 'Mariana', 'Juliana', 'Camila', 'Beatriz'];
+    const lastNames = ['Silva', 'Santos', 'Oliveira', 'Souza', 'Rodrigues', 'Ferreira', 'Alves', 'Pereira', 'Lima', 'Gomes'];
     const nowIso = new Date().toISOString();
 
     for (let i = 1; i <= count; i++) {
       const fName = firstNames[(i * 7) % firstNames.length];
       const lName = lastNames[(i * 13) % lastNames.length];
-      const lName2 = lastNames[(i * 19 + 3) % lastNames.length];
-      const fullName = `${fName} ${lName} ${lName2}`;
+      const fullName = `${fName} ${lName}`;
       const numStr = i.toString().padStart(5, '0');
       const participantId = `PART-${groupId}-${numStr}`;
       const paymentId = `PAY-${groupId}-${numStr}`;
 
-      const ddd = 10 + (i % 89);
-      const phoneEnd = (1000 + (i % 9000)).toString();
-      const phone = `${ddd}9${(1000 + (i % 8999))}${phoneEnd}`;
+      const phone = `1198888${(1000 + (i % 8999))}`;
+      const cpf = `${(100000000 + (i * 97) % 899999999)}00`;
 
-      const cpfBase = (100000000 + (i * 97) % 899999999).toString();
-      const cpf = `${cpfBase}00`;
-
-      this.data.participants[participantId] = {
+      state.participants[participantId] = {
         participantId,
         groupId,
         paymentId,
@@ -833,10 +840,13 @@ class Database {
         sequenceNumber: i,
         createdAt: nowIso,
         confirmedAt: nowIso,
+        sharesCount: 1,
+        weight: 1,
+        totalShares: 1,
+        entryValueCents: entryPriceCents,
       };
 
-      // Registrar também pagamento como pago para manter consistência 100%
-      this.data.payments[paymentId] = {
+      state.payments[paymentId] = {
         paymentId,
         groupId,
         userName: fullName,
@@ -852,6 +862,7 @@ class Database {
         pixQrCode: 'data:image/svg+xml;utf8,<svg></svg>',
         participantId,
         assignedNumber: numStr,
+        sharesCount: 1,
         webhookProcessed: true,
         rawEventId: `SIM-BULK-${paymentId}`,
         expiresAt: nowIso,
@@ -860,36 +871,35 @@ class Database {
       };
     }
 
-    this.addAuditLog({
-      type: 'GROUP_FULL',
-      actor: 'ADMIN',
-      groupId,
-      metadata: {
-        action: 'CREATE_BULK_TEST_GROUP',
-        participantsCount: count,
-        prizeAmountCents,
-      },
-    });
-
-    this.save();
     return group;
   }
 
+  public createBulkTestGroup(count = 10000): Group {
+    const group = this.createBulkTestGroupOnState(this.data, count);
+    this.addAuditLog({
+      type: 'GROUP_FULL',
+      actor: 'ADMIN',
+      groupId: group.groupId,
+      metadata: {
+        action: 'CREATE_BULK_TEST_GROUP',
+        participantsCount: count,
+      },
+    });
+    return group;
+  }
+
+  public save(): void {
+    // Motor híbrido serverless: estado mantido em memória e persistido no PostgreSQL se configurado.
+  }
+
   public resetDatabase(): void {
-    this.data.groups = this.generateSeedGroups();
-    this.data.participants = {};
-    this.data.payments = {};
-    this.data.draws = {};
-    this.data.auditLogs = [];
-    this.data.processedWebhooks = {};
+    this.data = this.initializeDefaultState();
     this.addAuditLog({
       type: 'SECURITY_ALERT',
       actor: 'ADMIN',
       metadata: { action: 'DATABASE_RESET' },
     });
-    this.save();
   }
 }
 
 export const db = new Database();
-

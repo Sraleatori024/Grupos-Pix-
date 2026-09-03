@@ -8,6 +8,9 @@ import {
   verifyDrawResult,
 } from './drawEngine.js';
 import { Payment } from './types.js';
+import { d5payService } from './d5payService.js';
+import { syncpayService } from './syncpayService.js';
+import { WebhookVerifier } from './webhookVerifier.js';
 
 export const router = express.Router();
 
@@ -110,18 +113,49 @@ router.post('/payments/create', async (req: Request, res: Response) => {
     const netAmountCents = Math.max(0, amountCents - gatewayFeeCents);
 
     const paymentId = `PAY-${cleanGroupId}-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
-    const gatewayTransactionId = `GW-TX-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    let gatewayTransactionId = `GW-TX-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    let syncpayIdentifier: string | undefined = undefined;
+    let pixCopiaECola = '';
+    let pixQrCode = '';
 
-    // Gera o Pix Copia e Cola padrão BACEN
-    const pixCopiaECola = generatePixPayload({
-      pixKey: 'financeiro@plataformagrupos.com.br',
-      merchantName: 'Plataforma Grupos Pix BR',
-      merchantCity: 'SAO PAULO',
-      txId: paymentId.replace(/[^A-Za-z0-9]/g, '').substring(0, 25),
-      amountCents,
-    });
+    const cleanEmail = String(userEmail || '').trim().toLowerCase() || `${cleanPhone}@participante.plataforma.com`;
 
-    const pixQrCode = await generatePixQrCodeDataUrl(pixCopiaECola);
+    // Integração Oficial SyncPayments (POST /api/partner/v1/cash-in)
+    if (syncpayService.isConfigured()) {
+      try {
+        const cashIn = await syncpayService.createCashInPix({
+          amount: Number((amountCents / 100).toFixed(2)),
+          description: `Participacao Grupo ${group.name.slice(0, 50)}`,
+          client: {
+            name: cleanName,
+            cpf: cleanCpf,
+            email: cleanEmail,
+            phone: cleanPhone,
+          },
+        });
+
+        pixCopiaECola = cashIn.pix_code;
+        gatewayTransactionId = cashIn.identifier;
+        syncpayIdentifier = cashIn.identifier;
+        pixQrCode = await generatePixQrCodeDataUrl(cashIn.pix_code);
+      } catch (syncPayErr: any) {
+        console.error('Erro na chamada SyncPayments createCashInPix:', syncPayErr.message);
+        return res.status(502).json({
+          error: `Erro ao gerar cobrança Pix via SyncPayments: ${syncPayErr.message}`,
+        });
+      }
+    } else {
+      // Modo de contingência para ambiente local sem credenciais cadastradas
+      syncpayIdentifier = gatewayTransactionId;
+      pixCopiaECola = generatePixPayload({
+        pixKey: 'financeiro@plataformagrupos.com.br',
+        merchantName: 'Plataforma Grupos Pix BR',
+        merchantCity: 'SAO PAULO',
+        txId: paymentId.replace(/[^A-Za-z0-9]/g, '').substring(0, 25),
+        amountCents,
+      });
+      pixQrCode = await generatePixQrCodeDataUrl(pixCopiaECola);
+    }
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString(); // 30 minutos
@@ -129,6 +163,7 @@ router.post('/payments/create', async (req: Request, res: Response) => {
     const payment: Payment = {
       paymentId,
       gatewayTransactionId,
+      syncpayIdentifier,
       groupId: cleanGroupId,
       status: 'PENDING',
       amountCents,
@@ -136,7 +171,7 @@ router.post('/payments/create', async (req: Request, res: Response) => {
       netAmountCents,
       userName: cleanName,
       userCpf: cleanCpf,
-      userEmail: String(userEmail || '').trim().toLowerCase(),
+      userEmail: cleanEmail,
       userPhone: cleanPhone,
       pixQrCode,
       pixCopiaECola,
@@ -155,6 +190,7 @@ router.post('/payments/create', async (req: Request, res: Response) => {
       payment: {
         paymentId: payment.paymentId,
         gatewayTransactionId: payment.gatewayTransactionId,
+        syncpayIdentifier: payment.syncpayIdentifier,
         groupId: payment.groupId,
         status: payment.status,
         amountCents: payment.amountCents,
@@ -269,6 +305,128 @@ router.post('/webhooks/payment', async (req: Request, res: Response) => {
     console.error('Erro ao processar webhook Pix:', err);
     res.status(500).json({ error: 'Erro interno ao processar webhook: ' + err.message });
   }
+});
+
+// ============================================================================
+// ROTA OFICIAL DE WEBHOOK SYNCPAYMENTS
+// POST /api/webhooks/syncpay (e alias compatível POST /api/webhooks/d5pay)
+// ============================================================================
+const handleSyncPayWebhook = async (req: Request, res: Response) => {
+  try {
+    // 1. Validação de Assinatura e Autenticidade do Gateway
+    const verification = WebhookVerifier.verifyRequest(req);
+    if (!verification.isValid) {
+      return res.status(401).json({
+        error: 'Assinatura do webhook SyncPayments inválida ou ausente.',
+        reason: verification.reason,
+      });
+    }
+
+    // 2. Extração do payload documentado da SyncPayments
+    const body = req.body || {};
+
+    const gatewayTransactionId = String(
+      body.identifier ||
+      body.id ||
+      body.data?.identifier ||
+      body.data?.id ||
+      body.transaction_id ||
+      body.charge_id ||
+      ''
+    ).trim();
+
+    if (!gatewayTransactionId) {
+      return res.status(400).json({
+        error: 'SyncPayments: Identificador de transação não encontrado no payload do webhook.',
+        fieldsReceived: Object.keys(body),
+      });
+    }
+
+    // 3. Validação rigorosa do status oficial da transação
+    // Conforme documentação: status pode ser "pending", "completed", etc.
+    const rawStatus = String(body.status || body.data?.status || '').toLowerCase().trim();
+    const isCompleted = rawStatus === 'completed' || rawStatus === 'paid' || rawStatus === 'approved';
+
+    // Regra mandatória: NÃO confirmar pagamento se o status não for estritamente concluído
+    if (!isCompleted) {
+      return res.status(200).json({
+        received: true,
+        confirmed: false,
+        status: rawStatus || 'unknown',
+        message: `Evento SyncPayments registrado com status "${rawStatus || 'desconhecido'}". Pagamento permanece pendente aguardando status oficial 'completed'.`,
+      });
+    }
+
+    // 4. Determinação do valor em centavos
+    let paidAmountCents = 100;
+    if (typeof body.amount === 'number') {
+      // Se for decimal em Reais (ex: 14.67 ou 1.00 ou 197)
+      paidAmountCents = Math.round(body.amount * 100);
+    } else if (typeof body.data?.amount_cents === 'number') {
+      paidAmountCents = body.data.amount_cents;
+    }
+
+    // Identificador único do evento para garantia de idempotência
+    const rawEventId = String(
+      body.end_to_end ||
+      body.event_id ||
+      body.id ||
+      `EVT-SYNCPAY-${gatewayTransactionId}-${rawStatus}`
+    );
+
+    // 5. Processamento Atômico e Idempotente no Banco
+    const result = await db.processPaidWebhook({
+      gatewayTransactionId,
+      rawEventId,
+      paidAmountCents,
+      actor: 'SYNCPAY_WEBHOOK',
+    });
+
+    if (!result.success) {
+      return res.status(422).json({
+        received: true,
+        success: false,
+        reason: result.reason,
+        paymentStatus: result.payment?.status,
+      });
+    }
+
+    return res.status(200).json({
+      received: true,
+      success: true,
+      alreadyProcessed: result.alreadyProcessed,
+      paymentId: result.payment?.paymentId,
+      assignedNumber: result.participant?.number,
+      participantId: result.participant?.participantId,
+      groupId: result.participant?.groupId,
+    });
+  } catch (err: any) {
+    console.error('Erro ao processar webhook SyncPayments:', err.message);
+    res.status(500).json({ error: 'Erro interno ao processar webhook SyncPayments: ' + err.message });
+  }
+};
+
+// Rota oficial padronizada SyncPayments
+router.post('/webhooks/syncpay', handleSyncPayWebhook);
+// Alias de compatibilidade retroativa
+router.post('/webhooks/d5pay', handleSyncPayWebhook);
+
+// Diagnóstico seguro do status da SyncPayments (sem vazar credenciais ou segredos)
+router.get('/admin/syncpay/status', checkAdminAuth, async (_req: Request, res: Response) => {
+  const status = syncpayService.getStatus();
+  res.json({
+    syncpayments: status,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+router.get('/admin/d5pay/status', checkAdminAuth, async (_req: Request, res: Response) => {
+  const status = syncpayService.getStatus();
+  res.json({
+    syncpayments: status,
+    d5pay: status,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Consulta de participantes pelo CPF ou ID
@@ -524,7 +682,6 @@ router.post('/admin/draws/:id/prepare', checkAdminAuth, (req: Request, res: Resp
     });
 
     group.drawStatus = 'PREPARED';
-    db.save();
 
     res.json({
       prepared: true,

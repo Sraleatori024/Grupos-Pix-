@@ -73,6 +73,7 @@ export function executeDeterministicDraw(params: {
   participants: Participant[];
   closedAt: string;
   externalSeed?: string;
+  drawnAt?: string;
 }): DrawExecutionResult {
   const { groupId, groupName, prizeAmountCents, participants, closedAt, externalSeed } = params;
 
@@ -84,7 +85,7 @@ export function executeDeterministicDraw(params: {
   const participantsCount = sortedParticipants.length;
   const listHash = generateParticipantsListHash(sortedParticipants);
 
-  const drawnAt = new Date().toISOString();
+  const drawnAt = params.drawnAt || new Date().toISOString();
   const rawEntropySeed = externalSeed || crypto.randomBytes(32).toString('hex');
   const combinedEntropyInput = `GROUP:${groupId}|COUNT:${participantsCount}|LIST_HASH:${listHash}|CLOSED_AT:${closedAt}|DRAWN_AT:${drawnAt}|SEED:${rawEntropySeed}`;
   const combinedDigest = crypto.createHash('sha256').update(combinedEntropyInput, 'utf8').digest('hex');

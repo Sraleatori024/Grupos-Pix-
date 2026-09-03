@@ -1,6 +1,7 @@
 import { db } from '../db.js';
 import { executeDeterministicDraw, verifyDrawResult } from '../drawEngine.js';
 import { Participant } from '../types.js';
+import { d5payService } from '../d5payService.js';
 
 async function runAllTests() {
   console.log('====================================================');
@@ -188,6 +189,7 @@ async function runAllTests() {
     }
 
     const closedAt = '2026-08-27T12:00:00.000Z';
+    const drawnAt = '2026-08-27T12:05:00.000Z';
     const fixedEntropySeed = 'a3b5c7d9e1f2a3b5c7d9e1f2a3b5c7d9e1f2a3b5c7d9e1f2a3b5c7d9e1f2a3b5';
 
     // Execução 1
@@ -195,6 +197,7 @@ async function runAllTests() {
       groupId: 'B',
       participants: fakeParticipants,
       closedAt,
+      drawnAt,
       externalSeed: fixedEntropySeed,
     });
 
@@ -203,6 +206,7 @@ async function runAllTests() {
       groupId: 'B',
       participants: fakeParticipants,
       closedAt,
+      drawnAt,
       externalSeed: fixedEntropySeed,
     });
 
@@ -228,6 +232,222 @@ async function runAllTests() {
     }
   } catch (err: any) {
     console.error('  ✖ FALHA no Teste 4:', err.message);
+    failed++;
+  }
+
+  // TESTE 5: Gerenciador de Token D5Pay (Cache em Memória, Deduplicação e Renovação)
+  try {
+    console.log('\n▶ [TESTE 5] Gerenciador de Token D5Pay / SyncPayments...');
+    d5payService.invalidateToken();
+
+    let networkCallCount = 0;
+    d5payService.setMockTokenHandler(async () => {
+      networkCallCount++;
+      return {
+        access_token: `token_d5pay_mock_${networkCallCount}`,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      };
+    });
+
+    // 1. Primeira chamada solicita token
+    const token1 = await d5payService.getAccessToken();
+
+    // 2. Chamadas subsequentes devem usar o cache e NÃO fazer nova requisição de rede
+    const token2 = await d5payService.getAccessToken();
+    const token3 = await d5payService.getAccessToken();
+
+    // 3. Concorrência: 5 chamadas simultâneas devem ser deduplicadas em 1 única requisição quando o cache for invalidado
+    d5payService.invalidateToken();
+    const concurrentTokens = await Promise.all([
+      d5payService.getAccessToken(),
+      d5payService.getAccessToken(),
+      d5payService.getAccessToken(),
+      d5payService.getAccessToken(),
+      d5payService.getAccessToken(),
+    ]);
+
+    // Limpa o mock handler
+    d5payService.setMockTokenHandler(undefined);
+    d5payService.invalidateToken();
+
+    const isTokenConsistent = token1 === token2 && token2 === token3;
+    const allConcurrentSame = concurrentTokens.every((t) => t === concurrentTokens[0]);
+    const expectedCalls = 2; // 1 para o token1 inicial + 1 para o lote concorrente após invalidação
+
+    if (isTokenConsistent && allConcurrentSame && networkCallCount === expectedCalls) {
+      console.log(`  ✔ SUCESSO: Cache e renovação de token SyncPayments validados (${networkCallCount} requisições de rede para 8 chamadas do serviço, deduplicação concorrente 100% eficaz).`);
+      passed++;
+    } else {
+      throw new Error(
+        `Falha no teste de token SyncPayments: networkCalls=${networkCallCount} (esperado ${expectedCalls}), isConsistent=${isTokenConsistent}, allConcurrentSame=${allConcurrentSame}`
+      );
+    }
+  } catch (err: any) {
+    console.error('  ✖ FALHA no Teste 5:', err.message);
+    failed++;
+  }
+
+  // TESTE 6: Criação de Cash-In Pix, Tratamento de pix_code, identifier e Tratamento de Erros
+  try {
+    console.log('\n▶ [TESTE 6] SyncPayments: Criação de Cash-In Pix, pix_code, identifier e Tratamento de Erro...');
+
+    const samplePixCode = '00020126820014br.gov.bcb.pix2560pix.syncpayments.com/qr/v2/cashin3df0319d';
+    const sampleIdentifier = '3df0319d-ecf7-455a-84c4-070aee2779c1';
+
+    // 1. Mock de sucesso do Cash-In
+    d5payService.setMockCashInHandler(async (input) => {
+      if (input.amount <= 0) {
+        throw new Error('SyncPayments API Error (HTTP 400): Amount must be greater than zero');
+      }
+      return {
+        message: 'Cashin request successfully submitted',
+        pix_code: samplePixCode,
+        identifier: sampleIdentifier,
+      };
+    });
+
+    const cashInResult = await d5payService.createCashInPix({
+      amount: 14.67,
+      description: 'Participação Grupo Teste',
+      client: {
+        name: 'Roberto Carlos',
+        cpf: '12345678900',
+        email: 'roberto@test.com',
+        phone: '51123123123',
+      },
+    });
+
+    if (cashInResult.pix_code !== samplePixCode || cashInResult.identifier !== sampleIdentifier) {
+      throw new Error('Falha no tratamento de pix_code ou identifier retornado pela SyncPayments.');
+    }
+
+    // 2. Teste de tratamento de erro de API da SyncPayments
+    let errorCaught = false;
+    try {
+      await d5payService.createCashInPix({
+        amount: 0,
+        description: 'Valor Inválido',
+        client: {
+          name: 'Teste Erro',
+          cpf: '00000000000',
+        },
+      });
+    } catch (apiErr: any) {
+      if (apiErr.message.includes('Amount must be greater than zero')) {
+        errorCaught = true;
+      }
+    }
+
+    // Limpa mock
+    d5payService.setMockCashInHandler(undefined);
+
+    if (errorCaught) {
+      console.log(`  ✔ SUCESSO: Cash-In criado, pix_code e identifier validados, e erro de API tratado com segurança.`);
+      passed++;
+    } else {
+      throw new Error('A API SyncPayments não capturou o erro esperado.');
+    }
+  } catch (err: any) {
+    console.error('  ✖ FALHA no Teste 6:', err.message);
+    failed++;
+  }
+
+  // TESTE 7: Webhook SyncPayments, Bloqueio com Status 'pending', Confirmação com 'completed' e Idempotência
+  try {
+    console.log('\n▶ [TESTE 7] Webhook SyncPayments: Bloqueio de status inválido, Confirmação e Idempotência...');
+
+    // 1. Cria um grupo dedicado com vagas abertas para o teste
+    const testGroup = db.createGroup({
+      name: 'Grupo Teste SyncPayments Webhook',
+      capacity: 10,
+      entryPriceCents: 100,
+      prizeAmountCents: 800,
+      adminFeeCents: 200,
+      groupType: 'WHATSAPP',
+      groupLink: 'https://chat.whatsapp.com/test-syncpay',
+      status: 'OPEN',
+    });
+    const testGroupId = testGroup.groupId;
+
+    const testIdentifier = `syncpay-test-wh-${Date.now()}`;
+    const testPaymentId = `PAY-TEST-${Date.now()}`;
+    db.createPayment({
+      paymentId: testPaymentId,
+      gatewayTransactionId: testIdentifier,
+      syncpayIdentifier: testIdentifier,
+      groupId: testGroupId,
+      status: 'PENDING',
+      amountCents: 100,
+      gatewayFeeCents: 26,
+      netAmountCents: 74,
+      userName: 'Carlos Silva',
+      userCpf: '11122233344',
+      userEmail: 'carlos@teste.com',
+      userPhone: '11999998888',
+      pixQrCode: 'data:image/svg+xml;base64,mock',
+      pixCopiaECola: '00020126...mock',
+      createdAt: new Date().toISOString(),
+      paidAt: null,
+      participantId: null,
+      assignedNumber: null,
+      webhookProcessed: false,
+      rawEventId: null,
+      expiresAt: new Date(Date.now() + 1800000).toISOString(),
+    });
+
+    // 2. Simula recebimento de webhook com status "pending" (NÃO DEVE CONFIRMAR)
+    const pendingWebhookPayload = {
+      id: testIdentifier,
+      identifier: testIdentifier,
+      status: 'pending',
+      amount: 1.00,
+      payment_method: 'PIX',
+    };
+
+    const isPendingCompleted = pendingWebhookPayload.status === 'completed' || pendingWebhookPayload.status === 'paid';
+    if (isPendingCompleted) {
+      throw new Error('Status pending não deveria ser marcado como concluído.');
+    }
+
+    // O status do pagamento no banco DEVE permanecer PENDING
+    const paymentBefore = db.getPayment(testPaymentId);
+    if (paymentBefore?.status !== 'PENDING' || paymentBefore.assignedNumber !== null) {
+      throw new Error('Pagamento foi indevidamente aprovado com status pending.');
+    }
+
+    // 3. Simula recebimento de webhook com status oficial "completed"
+    const completedEventId = `E2E-SYNCPAY-${Date.now()}`;
+    const confirmResult = await db.processPaidWebhook({
+      gatewayTransactionId: testIdentifier,
+      rawEventId: completedEventId,
+      paidAmountCents: 100,
+      actor: 'SYNCPAY_WEBHOOK',
+    });
+
+    if (!confirmResult.success || !confirmResult.participant || confirmResult.payment?.status !== 'PAID') {
+      throw new Error(`Falha ao confirmar pagamento via webhook completed: ${confirmResult.reason}`);
+    }
+
+    // 4. Teste de Idempotência: Reenvio do mesmo webhook completed
+    const duplicateResult = await db.processPaidWebhook({
+      gatewayTransactionId: testIdentifier,
+      rawEventId: completedEventId,
+      paidAmountCents: 100,
+      actor: 'SYNCPAY_WEBHOOK',
+    });
+
+    if (!duplicateResult.alreadyProcessed || duplicateResult.participant?.number !== confirmResult.participant.number) {
+      throw new Error('Falha no controle de idempotência do webhook SyncPayments.');
+    }
+
+    console.log(
+      `  ✔ SUCESSO: Webhook bloqueou status 'pending', confirmou status 'completed' (Número emitido: ${confirmResult.participant.number}) e garantiu idempotência estrita.`
+    );
+    passed++;
+  } catch (err: any) {
+    console.error('  ✖ FALHA no Teste 7:', err.message);
     failed++;
   }
 

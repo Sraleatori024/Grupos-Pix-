@@ -6,6 +6,8 @@ export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUNDE
 
 export type PromotionLegalStatus = 'PENDING_REVIEW' | 'AUTHORIZED' | 'DISABLED';
 
+export type ParticipationModel = 'FIXED_NUMBER' | 'CONTRIBUTION_WEIGHT';
+
 export interface Group {
   groupId: string; // e.g. 'G-01', 'sorteio-especial-1'
   name: string;
@@ -22,6 +24,8 @@ export interface Group {
   closedAt: string | null;
   drawStatus: 'NONE' | 'PREPARED' | 'COMPLETED';
   drawId: string | null;
+  participationModel?: ParticipationModel;
+  sharePriceCents?: number;
 }
 
 export interface CreateGroupInput {
@@ -53,7 +57,7 @@ export interface Participant {
   participantId: string;
   groupId: string;
   paymentId: string;
-  number: string; // e.g. "00001", "08421"
+  number: string; // e.g. "00001", "08421" (ou ID sequencial interno)
   sequenceNumber: number; // 1, 2, ...
   name: string;
   cpf: string; // Mascarado em visualizações públicas
@@ -61,11 +65,19 @@ export interface Participant {
   phone: string;
   createdAt: string;
   confirmedAt: string;
+  // Preparação para modelo sem rifa / cotas ponderadas
+  sharesCount?: number; // Quantidade de participações adquiridas
+  weight?: number; // Peso para sorteio ponderado
+  keywordUsed?: string; // Palavra-chave especial utilizada
+  bonusShares?: number; // Participações extras de bônus
+  totalShares?: number; // Total acumulado de participações
+  entryValueCents?: number; // Valor total financeiro contribuído
 }
 
 export interface Payment {
   paymentId: string;
   gatewayTransactionId: string;
+  syncpayIdentifier?: string;
   groupId: string;
   status: PaymentStatus;
   amountCents: number; // em centavos (ex: 100 = R$ 1,00)
@@ -81,6 +93,8 @@ export interface Payment {
   paidAt: string | null;
   participantId: string | null;
   assignedNumber: string | null;
+  sharesCount?: number;
+  keywordUsed?: string;
   webhookProcessed: boolean;
   rawEventId: string | null;
   expiresAt: string;

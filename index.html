@@ -3,6 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var currentFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return currentFetch;
+            },
+            set: function(fn) {
+              currentFetch = fn;
+            },
+            configurable: true,
+            enumerable: true,
+          });
+        } catch (e) {}
+      })();
+    </script>
     <title>Plataforma de Grupos Pix e Sorteios Auditáveis</title>
     <meta name="description" content="Sistema completo para gestão de grupos de participantes e sorteios independentes, pagamentos via Pix com concorrência atômica, webhooks idempotentes, integração com WhatsApp/Telegram e auditoria criptográfica." />
     <meta property="og:title" content="Plataforma de Grupos Pix e Sorteios Auditáveis" />
